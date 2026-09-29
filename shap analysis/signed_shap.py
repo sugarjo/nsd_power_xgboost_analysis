@@ -7,11 +7,18 @@ the last column (subject_stratification). The values are in the model's
 log-odds (margin) units.
 
 For every trial and feature:
-  1. repetition = SHAP(recent) + SHAP(old)
+  1. repetition = (SHAP(recent) + SHAP(old)) / 2
   2. new_vs_rep = SHAP(new) - repetition     (> 0 pushes towards "new")
   3. signed     = new_vs_rep on new trials, -new_vs_rep on recent/old trials,
                   so a positive value is a contribution towards the correct
                   label (new vs repeated).
+
+The softmax probabilities only depend on differences between the class
+margins, so a single class's SHAP value has no meaning on its own. The mean
+contrast in step 2 is the average of the two pairwise log-odds contrasts
+(new vs recent and new vs old), i.e. log(p_new / sqrt(p_recent * p_old)),
+and it stays exactly additive. Summing recent and old instead would count
+"repetition" twice and is not invariant to a shift of all margins.
 
 Writes shap_new_vs_repetition.pkl next to this script (git-ignored), a dict:
   "signed"     DataFrame trials x features, index = test_data, columns =
@@ -50,7 +57,7 @@ def signed_shap(data: dict) -> dict:
     assert shap.shape[:2] == (len(test), len(names))
     assert names == list(data["features"].columns[:-1])
 
-    repetition = shap[..., RECENT] + shap[..., OLD]
+    repetition = (shap[..., RECENT] + shap[..., OLD]) / 2
     new_vs_rep = shap[..., NEW] - repetition
     is_new = test.get_level_values("image_category").to_numpy() == NEW_CATEGORY
     signed = np.where(is_new[:, None], new_vs_rep, -new_vs_rep)
@@ -64,7 +71,7 @@ def signed_shap(data: dict) -> dict:
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--pkl", type=Path, default=REPO / "real_data_bipolar_xgboost_3w.pkl")
+    ap.add_argument("--pkl", type=Path, default=REPO / "real_data_bipolar_xgboost_3w_random_data.pkl")
     ap.add_argument("--out", type=Path, default=HERE / "shap_new_vs_repetition.pkl")
     args = ap.parse_args()
 
