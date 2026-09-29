@@ -5,8 +5,8 @@ features are left out, the signed mean-contrast SHAP value of the region's
 feature is averaged within subject (new and repeated trials weighted equally)
 and then across subjects.
 
-One flatmap per --panels entry (default: delta in the first second and alpha
-in the second second), all on one colour scale: symmetric, clipped at the
+One flatmap per --panels entry (default: delta in the first second, and alpha
+in the first and in the second second), all on one colour scale: symmetric, clipped at the
 98th percentile of |value| over the regions shown in any panel. Regions
 covered by fewer than --min-subjects subjects are dark gray. Amygdala and
 hippocampus are drawn in the ventral glass-brain inset of each map.
@@ -47,7 +47,7 @@ def main():
     ap.add_argument("--pkl", type=Path, default=REPO / "real_data_bipolar_xgboost_3w_random_data.pkl")
     ap.add_argument("--out-dir", type=Path, default=HERE / "figures")
     ap.add_argument("--cache", type=Path, default=REPO / "data" / "fsaverage")
-    ap.add_argument("--panels", type=panel, nargs="+", default=[("Delta", 1), ("Alpha", 2)],
+    ap.add_argument("--panels", type=panel, nargs="+", default=[("Delta", 1), ("Alpha", 1), ("Alpha", 2)],
                     help="band:second pairs, e.g. Delta:1 Alpha:2")
     ap.add_argument("--min-subjects", type=int, default=3)
     ap.add_argument("--n-boot", type=int, default=10000)
@@ -93,7 +93,7 @@ def main():
              f"Mean-contrast SHAP of one feature per region (band x second), NaN left out; averaged within "
              f"subject (new and repeated trials weighted equally), then across {subj.index.nunique()} subjects.\n"
              f"Regions with ≥{args.min_subjects} subjects; top 5 per panel by |value| named. One colour scale for "
-             f"both panels, clipped at ±{vmax:.3f} (98th percentile of |value| over the regions shown). "
+             f"all panels, clipped at ±{vmax:.3f} (98th percentile of |value| over the regions shown). "
              f"Flatmap of the left hemisphere, hemispheres pooled.",
              fontsize=8, color=INK_MUTED)
     name = "_".join(f"{b.lower()}{s}" for b, s in args.panels)
