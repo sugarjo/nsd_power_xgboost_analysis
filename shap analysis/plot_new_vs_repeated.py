@@ -204,8 +204,7 @@ def main():
         ghost = np.where((sulc > 0)[:, None], SULCUS, GYRUS) * 0.25 + 0.75
         meshes = aseg_meshes(paths["aseg.mgz"], subcortical)
         colors = {r: np.array(DIVERGING(norm(outside.at[r, "mean"]))[:3]) for r in subcortical}
-        names = {r: f"{r}\n{int(outside.at[r, 'n_subjects'])} subjects"
-                 for r in subcortical}
+        names = {r: r for r in subcortical}
         sub = ax.inset_axes([-0.04, 0.0, 0.34, 0.38])
         draw_glass_brain(sub, pial_v, faces, ghost, meshes, colors, "Ventral", names)
         sub.set_title("Outside HCP-MMP1 (ventral view)", fontsize=7, color=INK_MUTED, pad=2)
