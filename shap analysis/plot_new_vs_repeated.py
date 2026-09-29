@@ -20,14 +20,13 @@ Panel A: HCP-MMP1 flatmap of the region means, regions covered by at least
 are not HCP-MMP1 parcels, are drawn on the same colour scale in a ventral
 glass-brain inset at the map's bottom left. A parcel split by the flatmap cut
 is labeled once, on its largest piece.
-Panel B: net contribution of the seven frequency bands. Panel C: of the two
-seconds. B and C share one y-axis and one bar width; bars are coloured with
-the map's colormap on a symmetric scale shared by B and C. Dots in B and C
-are the individual subjects.
+Panel B: net contribution of each frequency band, split into its two seconds
+(one bar per band x second, side by side). Bars are coloured with the map's
+colormap on their own symmetric scale; dots are the individual subjects.
 
 Written to --out-dir:
   new_vs_repeated_contributions.png
-  new_vs_repeated_{region,band,second}.csv   mean, CI and number of subjects
+  new_vs_repeated_{region,band,second,band_second}.csv   mean, CI and number of subjects
 """
 
 import argparse
@@ -56,6 +55,7 @@ from plot_electrode_coverage import (ASEG_LABELS, GYRUS, INK, INK_MUTED, SULCUS,
 from signed_shap import NEW_CATEGORY, signed_shap  # noqa: E402
 
 BANDS = ["Delta", "Theta", "Alpha", "Beta", "GammaL", "GammaH", "Ripple"]
+BAND_LABELS = {"GammaL": "Low γ", "GammaH": "High γ"}
 # Diverging blue <-> red with a neutral gray midpoint.
 DIVERGING = LinearSegmentedColormap.from_list(
     "blue_gray_red", ["#0d366b", "#2a78d6", "#9ec5f4", "#f0efec", "#f3a9a8", "#e34948", "#8f1f1f"])
@@ -173,22 +173,35 @@ def style_axis(ax):
     ax.axhline(0, color=AXIS, lw=0.8)
 
 
-def bar_panel(ax, subj: pd.DataFrame, stats: pd.DataFrame, order, labels, title, norm):
-    x = np.arange(len(order))
-    s = stats.loc[order]
-    ax.bar(x, s["mean"], width=0.62, color=DIVERGING(norm(s["mean"].to_numpy(float))), zorder=2)
+def band_second_panel(ax, subj: pd.DataFrame, stats: pd.DataFrame, norm):
+    """One bar per band x second: the two seconds of a band side by side.
+
+    Bars carry the map's colormap (value), so the second is told by position
+    and the "1 s" / "2 s" tick under each bar, with the band name below."""
+    width, gap = 0.36, 0.04
+    x, ticks = [], []
+    for i, band in enumerate(BANDS):
+        for sec, off in ((1, -(width + gap) / 2), (2, (width + gap) / 2)):
+            x.append(i + off)
+            ticks.append((band, sec))
+    x = np.array(x)
+    s = stats.loc[ticks]
+    ax.bar(x, s["mean"], width=width, color=DIVERGING(norm(s["mean"].to_numpy(float))), zorder=2)
     ax.errorbar(x, s["mean"], yerr=[s["mean"] - s["ci_low"], s["ci_high"] - s["mean"]],
-                fmt="none", ecolor=INK, elinewidth=1.2, capsize=3, zorder=4)
+                fmt="none", ecolor=INK, elinewidth=1.2, capsize=2.5, zorder=4)
     rng = np.random.default_rng(1)
-    for i, g in enumerate(order):
-        v = subj[g].dropna()
-        ax.scatter(i + rng.uniform(-0.18, 0.18, len(v)), v, s=9, color=DOT, alpha=0.55,
+    for xi, key in zip(x, ticks):
+        v = subj[key].dropna()
+        ax.scatter(xi + rng.uniform(-0.11, 0.11, len(v)), v, s=8, color=DOT, alpha=0.55,
                    linewidths=0, zorder=3)
     style_axis(ax)
-    ax.set_xticks(x, labels, fontsize=8, color=INK)
+    ax.set_xlim(-0.6, len(BANDS) - 0.4)
+    ax.set_xticks(x, [f"{sec} s" for _, sec in ticks], fontsize=7, color=INK_MUTED)
+    for i, band in enumerate(BANDS):
+        ax.text(i, -0.1, BAND_LABELS.get(band, band), transform=ax.get_xaxis_transform(),
+                ha="center", va="top", fontsize=9, color=INK)
     ax.set_ylabel("Net signed SHAP (log-odds)", fontsize=8, color=INK)
-    ax.set_title(title, fontsize=10, color=INK, loc="left")
-
+    ax.set_title("B   Frequency bands, split by second", fontsize=10, color=INK, loc="left")
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -202,10 +215,12 @@ def main():
 
     out = signed_shap(pd.read_pickle(args.pkl))
     signed, missing = out["signed"], out["missing"]
-    subj = {lvl: subject_means(signed, missing, lvl) for lvl in ("region", "band", "second")}
-    stats = {lvl: pool(s, args.n_boot) for lvl, s in subj.items()}
-    for lvl, s in stats.items():
-        s.to_csv(args.out_dir / f"new_vs_repeated_{lvl}.csv")
+    levels = {"region": "region", "band": "band", "second": "second", "band_second": ["band", "second"]}
+    subj = {name: subject_means(signed, missing, lvl) for name, lvl in levels.items()}
+    stats = {name: pool(s, args.n_boot) for name, s in subj.items()}
+    stats["band_second"].index.names = ["band", "second"]
+    for name, s in stats.items():
+        s.to_csv(args.out_dir / f"new_vs_repeated_{name}.csv")
 
     region = stats["region"]
     shown = region[region["n_subjects"] >= args.min_subjects]
@@ -217,10 +232,10 @@ def main():
     norm = TwoSlopeNorm(0, -vmax, vmax)
 
     fig = plt.figure(figsize=(12, 9.2), facecolor="white")
-    gs = fig.add_gridspec(2, 2, height_ratios=[1.55, 1], width_ratios=[2.2, 1],
-                          hspace=0.28, wspace=0.22, left=0.07, right=0.98, top=0.93, bottom=0.08)
+    gs = fig.add_gridspec(2, 1, height_ratios=[1.55, 1], hspace=0.28,
+                          left=0.07, right=0.98, top=0.93, bottom=0.1)
 
-    ax = fig.add_subplot(gs[0, :])
+    ax = fig.add_subplot(gs[0])
     draw_region_map(ax, geo, shown["mean"], norm, n_labels=6)
     ax.set_title("A   Regions (flatmap, left hemisphere; hemispheres pooled)",
                  fontsize=10, color=INK, loc="left")
@@ -239,22 +254,11 @@ def main():
     leg.add_patch(plt.Rectangle((0, 0), 0.08, 1, facecolor=NO_DATA_GYRUS, edgecolor=AXIS, lw=0.5))
     leg.text(0.11, 0.5, f"Fewer than {args.min_subjects} subjects", fontsize=7, color=INK, va="center")
 
-    ax_b = fig.add_subplot(gs[1, 0])
-    # Bars use the map's colormap, on one symmetric scale shared by B and C (the
-    # map's own clipped scale would saturate them).
-    bar_max = max(np.abs(stats[lvl]["mean"]).max() for lvl in ("band", "second"))
-    bar_norm = TwoSlopeNorm(0, -bar_max, bar_max)
-    bar_panel(ax_b, subj["band"], stats["band"], BANDS,
-              [b.replace("GammaL", "Low γ").replace("GammaH", "High γ") for b in BANDS],
-              "B   Frequency bands", bar_norm)
-    ax_c = fig.add_subplot(gs[1, 1], sharey=ax_b)
-    bar_panel(ax_c, subj["second"], stats["second"], [1, 2], ["1st second", "2nd second"], "C   Seconds",
-              bar_norm)
-    ax_c.set_ylabel("")
-    # Same physical bar width in B and C: give C as many x-units per inch as B.
-    ax_b.set_xlim(-0.5, len(BANDS) - 0.5)
-    half = 0.5 * len(BANDS) * ax_c.get_position().width / ax_b.get_position().width
-    ax_c.set_xlim(0.5 - half, 0.5 + half)
+    # Bars use the map's colormap on their own symmetric scale (the map's clipped
+    # scale would saturate them).
+    bar_max = np.abs(stats["band_second"]["mean"]).max()
+    band_second_panel(fig.add_subplot(gs[1]), subj["band_second"], stats["band_second"],
+                      TwoSlopeNorm(0, -bar_max, bar_max))
 
     n_subj = len(subj["band"])
     fig.suptitle("What drives the model's new vs repeated (recent + old) decision",
@@ -265,11 +269,11 @@ def main():
              f"A: {len(shown)} regions with ≥{args.min_subjects} subjects "
              f"({len(region) - len(shown)} with fewer shown dark gray); top 6 by |value| named; "
              f"colour scale clipped at ±{vmax:.3f} (98th percentile of |value|).\n"
-             f"B, C: same y-axis and colour scale (map colormap, ±{bar_max:.2f}); bars = mean over subjects, whiskers = 95% bootstrap CI over subjects, dots = subjects.",
+             f"B: per band and second; map colormap on its own scale (±{bar_max:.3f}); bars = mean over subjects, whiskers = 95% bootstrap CI over subjects, dots = subjects.",
              fontsize=7.5, color=INK_MUTED)
     fig.savefig(args.out_dir / "new_vs_repeated_contributions.png", dpi=200, bbox_inches="tight")
     print("wrote", args.out_dir / "new_vs_repeated_contributions.png")
-    print(stats["band"].round(4).to_string()); print(stats["second"].round(4).to_string())
+    print(stats["band_second"].round(4).to_string())
 
 
 if __name__ == "__main__":
