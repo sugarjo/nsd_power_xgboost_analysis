@@ -16,10 +16,13 @@ Aggregation, for each of region / band / second:
      bootstrap confidence interval over subjects.
 
 Panel A: HCP-MMP1 flatmap of the region means, regions covered by at least
---min-subjects subjects only (others gray). Regions outside HCP-MMP1
-(Amygdala, Hippocampus, Putamen) are shown as swatches under the map.
+--min-subjects subjects only (others gray). Amygdala and hippocampus, which
+are not HCP-MMP1 parcels, are drawn on the same colour scale in a ventral
+glass-brain inset at the map's bottom left. A parcel split by the flatmap cut
+is labeled once, on its largest piece.
 Panel B: net contribution of the seven frequency bands. Panel C: of the two
-seconds. Dots in B and C are the individual subjects.
+seconds. B and C share one y-axis. Dots in B and C are the individual
+subjects.
 
 Written to --out-dir:
   new_vs_repeated_contributions.png
@@ -44,7 +47,8 @@ from scipy.sparse.csgraph import connected_components
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent
 sys.path.insert(0, str(REPO / "electrode coverages"))
-from plot_electrode_coverage import (GYRUS, INK, INK_MUTED, SULCUS, draw_flat,  # noqa: E402
+from plot_electrode_coverage import (ASEG_LABELS, GYRUS, INK, INK_MUTED, SULCUS,  # noqa: E402
+                                     aseg_meshes, draw_flat, draw_glass_brain,
                                      fetch_fsaverage, orient_flatmap, parcel_border,
                                      read_patch)
 from signed_shap import NEW_CATEGORY, signed_shap  # noqa: E402
@@ -81,11 +85,10 @@ def pool(subj: pd.DataFrame, n_boot: int, seed: int = 0) -> pd.DataFrame:
     return pd.DataFrame(rows).T.astype({"n_subjects": int})
 
 
-def parcel_pieces(mask: np.ndarray, faces: np.ndarray, min_share=0.05):
-    """Centres of the connected pieces of a parcel on the flat patch.
+def largest_piece(mask: np.ndarray, faces: np.ndarray) -> np.ndarray:
+    """Vertices of the largest connected piece of a parcel on the flat patch.
 
-    The flatmap cut can split a parcel (e.g. 31a); every piece holding at least
-    min_share of its vertices gets its own label."""
+    The flatmap cut can split a parcel (e.g. 31a); it is labeled only once."""
     idx = np.flatnonzero(mask)
     lut = np.full(len(mask), -1)
     lut[idx] = np.arange(len(idx))
@@ -93,8 +96,7 @@ def parcel_pieces(mask: np.ndarray, faces: np.ndarray, min_share=0.05):
     edges = np.r_[f[:, [0, 1]], f[:, [1, 2]]]
     graph = coo_matrix((np.ones(len(edges)), (edges[:, 0], edges[:, 1])), shape=(len(idx),) * 2)
     _, comp = connected_components(graph, directed=False)
-    sizes = np.bincount(comp)
-    return [idx[comp == c] for c in np.flatnonzero(sizes >= min_share * len(idx))]
+    return idx[comp == np.bincount(comp).argmax()]
 
 
 def style_axis(ax):
@@ -186,15 +188,26 @@ def main():
     top = cortical["mean"].abs().nlargest(6).index
     placed = []
     for r in top:
-        for piece in parcel_pieces(parcel[vno] == r, patch_faces):
-            pts = patch_xy[piece]
-            xy = pts[np.argmin(((pts - pts.mean(0)) ** 2).sum(1))]   # a vertex inside the piece
-            # label above the parcel, or below it when a label above would collide
-            crowded = any(np.hypot(*(xy - q)) < 30 and q[1] >= xy[1] for q in placed)
-            placed.append(xy)
-            ax.annotate(f"{r} {cortical.at[r, 'mean']:+.3f}", xy, xytext=(0, -12 if crowded else 10),
-                        textcoords="offset points", ha="center", va="top" if crowded else "baseline",
-                        fontsize=7, color=INK, arrowprops=dict(arrowstyle="-", color=INK, lw=0.5))
+        pts = patch_xy[largest_piece(parcel[vno] == r, patch_faces)]
+        xy = pts[np.argmin(((pts - pts.mean(0)) ** 2).sum(1))]   # a vertex inside the piece
+        # label above the parcel, or below it when a label above would collide
+        crowded = any(np.hypot(*(xy - q)) < 30 and q[1] >= xy[1] for q in placed)
+        placed.append(xy)
+        ax.annotate(f"{r} {cortical.at[r, 'mean']:+.3f}", xy, xytext=(0, -12 if crowded else 10),
+                    textcoords="offset points", ha="center", va="top" if crowded else "baseline",
+                    fontsize=7, color=INK, arrowprops=dict(arrowstyle="-", color=INK, lw=0.5))
+
+    # Amygdala / hippocampus in a ventral glass brain, in the map's empty bottom-left corner.
+    subcortical = [r for r in outside.index if r in ASEG_LABELS]
+    if subcortical:
+        ghost = np.where((sulc > 0)[:, None], SULCUS, GYRUS) * 0.25 + 0.75
+        meshes = aseg_meshes(paths["aseg.mgz"], subcortical)
+        colors = {r: np.array(DIVERGING(norm(outside.at[r, "mean"]))[:3]) for r in subcortical}
+        names = {r: f"{r}\n{outside.at[r, 'mean']:+.3f}\n{int(outside.at[r, 'n_subjects'])} subjects"
+                 for r in subcortical}
+        sub = ax.inset_axes([-0.04, 0.0, 0.34, 0.38])
+        draw_glass_brain(sub, pial_v, faces, ghost, meshes, colors, "Ventral", names)
+        sub.set_title("Outside HCP-MMP1 (ventral view)", fontsize=7, color=INK_MUTED, pad=2)
 
     cax = ax.inset_axes([0.6, -0.07, 0.28, 0.03])
     cb = fig.colorbar(plt.cm.ScalarMappable(norm=norm, cmap=DIVERGING), cax=cax,
@@ -204,27 +217,19 @@ def main():
     cb.set_label("Net signed SHAP per region (log-odds); > 0 helps the correct new/repeated call",
                  fontsize=8, color=INK)
 
-    # Legend on the left: no-data gray, then the regions outside HCP-MMP1.
-    rows = [("swatch", NO_DATA_GYRUS, f"Fewer than {args.min_subjects} subjects")]
-    if len(outside):
-        rows.append(("header", None, "Outside HCP-MMP1"))
-        rows += [("swatch", DIVERGING(norm(row["mean"]))[:3],
-                  f"{r}  {row['mean']:+.3f}  ({int(row['n_subjects'])} subjects)")
-                 for r, row in outside.iterrows()]
-    leg = ax.inset_axes([0.0, -0.13, 0.3, 0.14])
-    leg.set_xlim(0, 1); leg.set_ylim(-len(rows) + 0.5, 0.5); leg.axis("off")
-    for i, (kind, color, text) in enumerate(rows):
-        if kind == "header":
-            leg.text(0, -i, text, fontsize=7, color=INK_MUTED, va="center")
-            continue
-        leg.add_patch(plt.Rectangle((0, -i - 0.35), 0.06, 0.7, facecolor=color, edgecolor=AXIS, lw=0.5))
-        leg.text(0.09, -i, text, fontsize=7, color=INK, va="center")
+    # Swatch for parcels below the subject threshold, left of the colour bar.
+    leg = ax.inset_axes([0.3, -0.07, 0.25, 0.03])
+    leg.set_xlim(0, 1); leg.set_ylim(0, 1); leg.axis("off")
+    leg.add_patch(plt.Rectangle((0, 0), 0.08, 1, facecolor=NO_DATA_GYRUS, edgecolor=AXIS, lw=0.5))
+    leg.text(0.11, 0.5, f"Fewer than {args.min_subjects} subjects", fontsize=7, color=INK, va="center")
 
-    bar_panel(fig.add_subplot(gs[1, 0]), subj["band"], stats["band"], BANDS,
+    ax_b = fig.add_subplot(gs[1, 0])
+    bar_panel(ax_b, subj["band"], stats["band"], BANDS,
               [b.replace("GammaL", "Low γ").replace("GammaH", "High γ") for b in BANDS],
               "B   Frequency bands")
-    bar_panel(fig.add_subplot(gs[1, 1]), subj["second"], stats["second"], [1, 2],
-              ["1st second", "2nd second"], "C   Seconds")
+    ax_c = fig.add_subplot(gs[1, 1], sharey=ax_b)
+    bar_panel(ax_c, subj["second"], stats["second"], [1, 2], ["1st second", "2nd second"], "C   Seconds")
+    ax_c.set_ylabel("")
 
     n_subj = len(subj["band"])
     fig.suptitle("What drives the model's new vs repeated (recent + old) decision",
@@ -235,7 +240,7 @@ def main():
              f"A: {len(shown)} regions with ≥{args.min_subjects} subjects "
              f"({len(region) - len(shown)} with fewer shown dark gray); top 6 by |value| labeled; "
              f"colour scale clipped at ±{vmax:.3f} (98th percentile of |value|). "
-             f"B, C: bars = mean over subjects, whiskers = 95% bootstrap CI over subjects, dots = subjects.",
+             f"B, C: same y-axis; bars = mean over subjects, whiskers = 95% bootstrap CI over subjects, dots = subjects.",
              fontsize=7.5, color=INK_MUTED)
     fig.savefig(args.out_dir / "new_vs_repeated_contributions.png", dpi=200, bbox_inches="tight")
     print("wrote", args.out_dir / "new_vs_repeated_contributions.png")
