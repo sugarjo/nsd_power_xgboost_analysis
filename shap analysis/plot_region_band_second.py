@@ -5,8 +5,8 @@ features are left out, the signed mean-contrast SHAP value of the region's
 feature is averaged within subject (new and repeated trials weighted equally)
 and then across subjects.
 
-One flatmap per --panels entry (default: delta in the first second, and alpha
-in the first and in the second second), all on one colour scale: symmetric, clipped at the
+One flatmap per --panels entry (default: delta and alpha, each in the first and
+in the second second; up to three panels per row, four as 2 x 2), all on one colour scale: symmetric, clipped at the
 98th percentile of |value| over the regions shown in any panel. Regions
 covered by fewer than --min-subjects subjects are dark gray. Amygdala and
 hippocampus are drawn in the ventral glass-brain inset of each map.
@@ -47,7 +47,7 @@ def main():
     ap.add_argument("--pkl", type=Path, default=REPO / "real_data_bipolar_xgboost_3w_random_data.pkl")
     ap.add_argument("--out-dir", type=Path, default=HERE / "figures")
     ap.add_argument("--cache", type=Path, default=REPO / "data" / "fsaverage")
-    ap.add_argument("--panels", type=panel, nargs="+", default=[("Delta", 1), ("Alpha", 1), ("Alpha", 2)],
+    ap.add_argument("--panels", type=panel, nargs="+", default=[("Delta", 1), ("Delta", 2), ("Alpha", 1), ("Alpha", 2)],
                     help="band:second pairs, e.g. Delta:1 Alpha:2")
     ap.add_argument("--min-subjects", type=int, default=3)
     ap.add_argument("--n-boot", type=int, default=10000)
@@ -68,28 +68,35 @@ def main():
     geo = load_flatmap(args.cache)
 
     n = len(args.panels)
-    fig, axes = plt.subplots(1, n, figsize=(6.2 * n, 5.4), facecolor="white", squeeze=False,
-                             gridspec_kw=dict(wspace=0.04, left=0.02, right=0.98, top=0.88, bottom=0.2))
-    for i, (ax, (band, second)) in enumerate(zip(axes[0], args.panels)):
+    ncols = 2 if n == 4 else min(n, 3)
+    nrows = -(-n // ncols)
+    height = 4.4 * nrows + 1.0            # 1 inch below the maps for colour bar and key
+    bottom = 1.0 / height
+    fig, axes = plt.subplots(nrows, ncols, figsize=(6.2 * ncols, height), facecolor="white", squeeze=False,
+                             gridspec_kw=dict(wspace=0.04, hspace=0.12, left=0.02, right=0.98,
+                                              top=1 - 0.8 / height, bottom=bottom))
+    for ax in axes.ravel()[n:]:
+        ax.axis("off")
+    for i, (ax, (band, second)) in enumerate(zip(axes.ravel(), args.panels)):
         draw_region_map(ax, geo, values[(band, second)], norm, n_labels=5, inset_labels=i == 0)
         ax.set_title(f"{chr(65 + i)}   {BAND_NAMES.get(band, band)}, {ORDINAL.get(second, second)} second",
                      fontsize=11, color=INK, loc="left")
 
-    cax = fig.add_axes([0.55, 0.11, 0.3, 0.03])
+    cax = fig.add_axes([0.55, 0.55 * bottom, 0.3, 0.15 * bottom])
     cb = fig.colorbar(plt.cm.ScalarMappable(norm=norm, cmap=DIVERGING), cax=cax,
                       orientation="horizontal", extend="both")
     cb.outline.set_visible(False)
     cb.ax.tick_params(labelsize=8, colors=INK_MUTED, length=0)
     cb.set_label("Net signed SHAP per region (log-odds); > 0 helps the correct new/repeated call",
                  fontsize=9, color=INK)
-    key = fig.add_axes([0.2, 0.11, 0.25, 0.03])
+    key = fig.add_axes([0.2, 0.55 * bottom, 0.25, 0.15 * bottom])
     key.set_xlim(0, 1); key.set_ylim(0, 1); key.axis("off")
     key.add_patch(plt.Rectangle((0, 0), 0.06, 1, facecolor=NO_DATA_GYRUS, edgecolor=AXIS, lw=0.5))
     key.text(0.09, 0.5, f"Fewer than {args.min_subjects} subjects", fontsize=9, color=INK, va="center")
 
     fig.suptitle("Region contributions to the new vs repeated decision", fontsize=14, color=INK,
-                 x=0.02, ha="left")
-    fig.text(0.02, -0.05,
+                 x=0.02, y=1 - 0.15 / height, ha="left", va="top")
+    fig.text(0.02, -0.25 * bottom,
              f"Mean-contrast SHAP of one feature per region (band x second), NaN left out; averaged within "
              f"subject (new and repeated trials weighted equally), then across {subj.index.nunique()} subjects.\n"
              f"Regions with ≥{args.min_subjects} subjects; top 5 per panel by |value| named. One colour scale for "
