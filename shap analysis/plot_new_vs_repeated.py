@@ -21,8 +21,9 @@ are not HCP-MMP1 parcels, are drawn on the same colour scale in a ventral
 glass-brain inset at the map's bottom left. A parcel split by the flatmap cut
 is labeled once, on its largest piece.
 Panel B: net contribution of the seven frequency bands. Panel C: of the two
-seconds. B and C share one y-axis. Dots in B and C are the individual
-subjects.
+seconds. B and C share one y-axis and one bar width; bars are coloured with
+the map's colormap on a symmetric scale shared by B and C. Dots in B and C
+are the individual subjects.
 
 Written to --out-dir:
   new_vs_repeated_contributions.png
@@ -110,10 +111,10 @@ def style_axis(ax):
     ax.axhline(0, color=AXIS, lw=0.8)
 
 
-def bar_panel(ax, subj: pd.DataFrame, stats: pd.DataFrame, order, labels, title):
+def bar_panel(ax, subj: pd.DataFrame, stats: pd.DataFrame, order, labels, title, norm):
     x = np.arange(len(order))
     s = stats.loc[order]
-    ax.bar(x, s["mean"], width=0.62, color=BAR, zorder=2)
+    ax.bar(x, s["mean"], width=0.62, color=DIVERGING(norm(s["mean"].to_numpy(float))), zorder=2)
     ax.errorbar(x, s["mean"], yerr=[s["mean"] - s["ci_low"], s["ci_high"] - s["mean"]],
                 fmt="none", ecolor=INK, elinewidth=1.2, capsize=3, zorder=4)
     rng = np.random.default_rng(1)
@@ -193,7 +194,7 @@ def main():
         # label above the parcel, or below it when a label above would collide
         crowded = any(np.hypot(*(xy - q)) < 30 and q[1] >= xy[1] for q in placed)
         placed.append(xy)
-        ax.annotate(f"{r} {cortical.at[r, 'mean']:+.3f}", xy, xytext=(0, -12 if crowded else 10),
+        ax.annotate(r, xy, xytext=(0, -12 if crowded else 10),
                     textcoords="offset points", ha="center", va="top" if crowded else "baseline",
                     fontsize=7, color=INK, arrowprops=dict(arrowstyle="-", color=INK, lw=0.5))
 
@@ -203,7 +204,7 @@ def main():
         ghost = np.where((sulc > 0)[:, None], SULCUS, GYRUS) * 0.25 + 0.75
         meshes = aseg_meshes(paths["aseg.mgz"], subcortical)
         colors = {r: np.array(DIVERGING(norm(outside.at[r, "mean"]))[:3]) for r in subcortical}
-        names = {r: f"{r}\n{outside.at[r, 'mean']:+.3f}\n{int(outside.at[r, 'n_subjects'])} subjects"
+        names = {r: f"{r}\n{int(outside.at[r, 'n_subjects'])} subjects"
                  for r in subcortical}
         sub = ax.inset_axes([-0.04, 0.0, 0.34, 0.38])
         draw_glass_brain(sub, pial_v, faces, ghost, meshes, colors, "Ventral", names)
@@ -224,12 +225,21 @@ def main():
     leg.text(0.11, 0.5, f"Fewer than {args.min_subjects} subjects", fontsize=7, color=INK, va="center")
 
     ax_b = fig.add_subplot(gs[1, 0])
+    # Bars use the map's colormap, on one symmetric scale shared by B and C (the
+    # map's own clipped scale would saturate them).
+    bar_max = max(np.abs(stats[lvl]["mean"]).max() for lvl in ("band", "second"))
+    bar_norm = TwoSlopeNorm(0, -bar_max, bar_max)
     bar_panel(ax_b, subj["band"], stats["band"], BANDS,
               [b.replace("GammaL", "Low γ").replace("GammaH", "High γ") for b in BANDS],
-              "B   Frequency bands")
+              "B   Frequency bands", bar_norm)
     ax_c = fig.add_subplot(gs[1, 1], sharey=ax_b)
-    bar_panel(ax_c, subj["second"], stats["second"], [1, 2], ["1st second", "2nd second"], "C   Seconds")
+    bar_panel(ax_c, subj["second"], stats["second"], [1, 2], ["1st second", "2nd second"], "C   Seconds",
+              bar_norm)
     ax_c.set_ylabel("")
+    # Same physical bar width in B and C: give C as many x-units per inch as B.
+    ax_b.set_xlim(-0.5, len(BANDS) - 0.5)
+    half = 0.5 * len(BANDS) * ax_c.get_position().width / ax_b.get_position().width
+    ax_c.set_xlim(0.5 - half, 0.5 + half)
 
     n_subj = len(subj["band"])
     fig.suptitle("What drives the model's new vs repeated (recent + old) decision",
@@ -238,9 +248,9 @@ def main():
              f"Mean-contrast SHAP, NaN features left out; per trial summed within a region/band/second, "
              f"averaged within subject (new and repeated trials weighted equally), then across {n_subj} subjects.\n"
              f"A: {len(shown)} regions with ≥{args.min_subjects} subjects "
-             f"({len(region) - len(shown)} with fewer shown dark gray); top 6 by |value| labeled; "
-             f"colour scale clipped at ±{vmax:.3f} (98th percentile of |value|). "
-             f"B, C: same y-axis; bars = mean over subjects, whiskers = 95% bootstrap CI over subjects, dots = subjects.",
+             f"({len(region) - len(shown)} with fewer shown dark gray); top 6 by |value| named; "
+             f"colour scale clipped at ±{vmax:.3f} (98th percentile of |value|).\n"
+             f"B, C: same y-axis and colour scale (map colormap, ±{bar_max:.2f}); bars = mean over subjects, whiskers = 95% bootstrap CI over subjects, dots = subjects.",
              fontsize=7.5, color=INK_MUTED)
     fig.savefig(args.out_dir / "new_vs_repeated_contributions.png", dpi=200, bbox_inches="tight")
     print("wrote", args.out_dir / "new_vs_repeated_contributions.png")
