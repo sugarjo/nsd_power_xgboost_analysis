@@ -71,7 +71,7 @@ def signed_shap(data: dict) -> dict:
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--pkl", type=Path, default=REPO / "real_data_bipolar_xgboost_3w_random_data.pkl")
+    ap.add_argument("--pkl", type=Path, default=REPO / "random_data_bipolar_xgboost_3w.pkl")
     ap.add_argument("--out", type=Path, default=HERE / "shap_new_vs_repetition.pkl")
     args = ap.parse_args()
 

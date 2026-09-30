@@ -91,7 +91,7 @@ def sign_flip_p(subj: pd.DataFrame, n_perm: int = 100000, seed: int = 0) -> pd.S
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--pkl", type=Path, default=REPO / "real_data_bipolar_xgboost_3w_random_data.pkl")
+    ap.add_argument("--pkl", type=Path, default=REPO / "random_data_bipolar_xgboost_3w.pkl")
     ap.add_argument("--out-dir", type=Path, default=HERE / "figures")
     ap.add_argument("--cache", type=Path, default=REPO / "data" / "fsaverage")
     ap.add_argument("--panels", type=panel, nargs="+",
