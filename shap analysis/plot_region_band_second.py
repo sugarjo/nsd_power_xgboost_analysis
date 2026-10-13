@@ -54,7 +54,8 @@ def panel(text: str) -> tuple[str, int]:
     return band, int(second)
 
 
-def map_grid(geo, panel_values, titles, norm, cbar_label, min_subjects, title, footer, regions=None):
+def map_grid(geo, panel_values, titles, norm, cbar_label, min_subjects, title, footer, regions=None,
+             n_labels=5):
     """Figure with one region flatmap per panel on a shared colour scale.
 
     Up to three panels per row (four as 2 x 2); colour bar and the no-data
@@ -70,7 +71,7 @@ def map_grid(geo, panel_values, titles, norm, cbar_label, min_subjects, title, f
     for ax in axes.ravel()[n:]:
         ax.axis("off")
     for i, (ax, values, text) in enumerate(zip(axes.ravel(), panel_values, titles)):
-        draw_region_map(ax, geo, values, norm, n_labels=5, inset_labels=i == 0, regions=regions)
+        draw_region_map(ax, geo, values, norm, n_labels=n_labels, inset_labels=i == 0, regions=regions)
         ax.set_title(f"{chr(65 + i)}   {text}", fontsize=11, color=INK, loc="left")
 
     cax = fig.add_axes([0.55, 0.55 * bottom, 0.3, 0.15 * bottom])
@@ -98,6 +99,7 @@ def main():
     ap.add_argument("--panels", type=panel, nargs="+", default=[("Delta", 1), ("Delta", 2), ("Alpha", 1), ("Alpha", 2)],
                     help="band:second pairs, e.g. Delta:1 Alpha:2")
     ap.add_argument("--contrast", choices=list(CONTRASTS), default="new_vs_repeated")
+    ap.add_argument("--n-labels", type=int, default=5, help="regions named per panel (largest |value|)")
     ap.add_argument("--min-subjects", type=int, default=3)
     ap.add_argument("--n-boot", type=int, default=10000)
     ap.add_argument("--merged", type=Path, nargs="?", const=REPO / "electrode coverages" / "figures" / "merged_regions.csv",
@@ -145,9 +147,9 @@ def main():
         f"subject ({C['balance']}), then across {subj.index.nunique()} subjects.\n"
         + (f"Parcels with <{args.min_subjects} subjects merged with neighbours ({args.merged.name}), SHAP summed "
            f"within each merged region. " if args.merged else "") +
-        f"Regions with ≥{args.min_subjects} subjects; top 5 per panel by |value| named.\nOne colour scale for "
+        f"Regions with ≥{args.min_subjects} subjects; top {args.n_labels} per panel by |value| named.\nOne colour scale for "
         f"all panels, clipped at ±{vmax:.2g} (98th percentile of |value| over the regions shown). "
-        f"Flatmap of the left hemisphere, hemispheres pooled.", regions)
+        f"Flatmap of the left hemisphere, hemispheres pooled.", regions, args.n_labels)
     name = "_".join(f"{b.lower()}{s}" for b, s in args.panels)
     path = args.out_dir / f"{prefix}_{name}{suffix}.png"
     fig.savefig(path, dpi=200, bbox_inches="tight")
