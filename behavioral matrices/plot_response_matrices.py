@@ -81,7 +81,7 @@ def add_colorbar(fig, cax):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--pkl", type=Path, default=REPO / "real_data_bipolar_xgboost_3w.pkl")
+    ap.add_argument("--pkl", type=Path, default=REPO / "random_data_bipolar_xgboost_3w.pkl")
     ap.add_argument("--out-dir", type=Path, default=HERE / "figures")
     args = ap.parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)

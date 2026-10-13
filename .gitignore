@@ -1,0 +1,6 @@
+# data extracted from the 7z archive and script outputs
+*.pkl
+
+# fsaverage download cache and Python bytecode
+data/
+__pycache__/
