@@ -48,7 +48,7 @@ from scipy.sparse.csgraph import connected_components
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent
 sys.path.insert(0, str(REPO / "electrode coverages"))
-from plot_electrode_coverage import (ASEG_LABELS, GYRUS, INK, INK_MUTED, SULCUS,  # noqa: E402
+from plot_electrode_coverage import (ASEG_LABELS, NOT_SHOWN, GYRUS, INK, INK_MUTED, SULCUS,  # noqa: E402
                                      aseg_meshes, draw_flat, draw_glass_brain,
                                      fetch_fsaverage, orient_flatmap, parcel_border,
                                      read_patch)
@@ -149,7 +149,7 @@ def draw_region_map(ax, geo, values: pd.Series, norm, n_labels=0, inset_labels=T
                     fontsize=7, color=INK, arrowprops=dict(arrowstyle="-", color=INK, lw=0.5))
 
     # Amygdala / hippocampus in a ventral glass brain, in the map's empty bottom-left corner.
-    subcortical = [r for r in outside.index if r in ASEG_LABELS]
+    subcortical = [r for r in outside.index if r in ASEG_LABELS and r not in NOT_SHOWN]
     if subcortical:
         missing = [r for r in subcortical if r not in geo.meshes]
         geo.meshes.update(aseg_meshes(geo.paths["aseg.mgz"], missing) if missing else {})

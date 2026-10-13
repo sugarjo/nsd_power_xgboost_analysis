@@ -6,9 +6,9 @@ without a bipolar channel in it. Coverage is therefore defined per parcel as
 the number of subjects that have data in that parcel. Hemispheres are pooled in
 the feature names, so everything is drawn on the left hemisphere.
 
-Regions that are not in HCP-MMP1 (Amygdala, Hippocampus, Putamen) are drawn as
-meshes extracted from the fsaverage aseg segmentation, inside a faded pial
-surface. Anterior and posterior hippocampus are the aseg hippocampus cut at
+Regions that are not in HCP-MMP1 (Amygdala, anterior/posterior Hippocampus) are
+drawn as meshes extracted from the fsaverage aseg segmentation, inside a faded
+pial surface. Regions in NOT_SHOWN (Putamen) are only listed in the footnotes. Anterior and posterior hippocampus are the aseg hippocampus cut at
 y = -23 mm (HIPPOCAMPUS_SPLIT_Y). All group figures share one color scale running from 1 to the number
 of subjects; the per-subject figures only show present/absent.
 
@@ -54,6 +54,9 @@ ASEG_LABELS = {
     "Hippocampus": 17, "Amygdala": 18, "Accumbens": 26, "VentralDC": 28,
     "Hippocampus-anterior": 17, "Hippocampus-posterior": 17,
 }
+# Regions outside HCP-MMP1 that are left out of the subcortical figures
+# (counted in the footnote only).
+NOT_SHOWN = {"Putamen"}
 # Short names for the per-subject titles.
 SHORT = {"Amygdala": "Amy", "Putamen": "Put", "Hippocampus": "HC",
          "Hippocampus-anterior": "aHC", "Hippocampus-posterior": "pHC"}
@@ -251,9 +254,9 @@ def main():
     cov.astype(int).to_csv(args.out_dir / "coverage_subject_by_region.csv")
     n_subj = cov.sum()
     extra = [r for r in cov.columns if r not in set(parcel)]   # not in HCP-MMP1
-    subcortical = [r for r in extra if r in ASEG_LABELS]
-    if set(extra) - set(subcortical):
-        print("regions not found in HCP-MMP1 or aseg:", sorted(set(extra) - set(subcortical)))
+    subcortical = [r for r in extra if r in ASEG_LABELS and r not in NOT_SHOWN]
+    if set(extra) - set(subcortical) - NOT_SHOWN:
+        print("regions not found in HCP-MMP1 or aseg:", sorted(set(extra) - set(subcortical) - NOT_SHOWN))
 
     # One fixed scale for every group figure: 1 .. number of subjects.
     vmax = len(cov)
@@ -263,7 +266,10 @@ def main():
     rgb = vertex_colors(values, sulc, border, cmap, norm)
 
     sub_txt = "Not in HCP-MMP1 (see coverage_subcortical.png): " + ", ".join(
-        f"{r} {int(n_subj[r])}" for r in extra)
+        f"{r} {int(n_subj[r])}" for r in subcortical)
+    hidden = [r for r in extra if r in NOT_SHOWN]
+    if hidden:
+        sub_txt += "; not shown: " + ", ".join(f"{r} {int(n_subj[r])}" for r in hidden)
     footer = (f"{len(cov)} subjects, {int((n_subj.drop(extra) > 0).sum())} of 180 "
               f"HCP-MMP1 parcels covered. Hemispheres pooled, shown on the left fsaverage hemisphere.")
 
@@ -348,8 +354,8 @@ def main():
         ax.axis("off")
     fig.suptitle("Regions outside HCP-MMP1 with a bipolar channel, per subject (ventral view)",
                  fontsize=13, color=INK, x=0.02, ha="left")
-    fig.text(0.02, -0.02, "Blue: present, gray: absent. Ventral view, anterior to the left: putamen is the "
-             "anterior-lateral shape, amygdala the middle one and hippocampus the long posterior one, "
+    fig.text(0.02, -0.02, "Blue: present, gray: absent. Ventral view, anterior to the left: amygdala is the "
+             "anterior shape and hippocampus the long posterior one, "
              f"split into an anterior and a posterior part at y = {HIPPOCAMPUS_SPLIT_Y:g} mm "
              "(labelled in coverage_subcortical.png).\n"
              "Titles: " + ", ".join(f"{v} = {k}" for k, v in SHORT.items() if k in subcortical) + ".",
