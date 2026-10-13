@@ -209,24 +209,39 @@ def draw_region_map(ax, geo, values: pd.Series, norm, n_labels=0, inset_labels=T
     draw_flat(ax, geo.patch_xy, geo.patch_faces, rgb[vno])
 
     # Name the largest regions. Each label tries above, below, right, left, then
-    # further out, and takes the first spot whose text box overlaps no earlier label.
+    # further out, and takes the first spot whose text box overlaps no earlier
+    # label; if every spot overlaps, the one with the least overlap.
     renderer = ax.figure.canvas.get_renderer()
     placed = []
     spots = [(0, 10, "center", "bottom"), (0, -10, "center", "top"), (14, 0, "left", "center"),
-             (-14, 0, "right", "center"), (0, 24, "center", "bottom"), (0, -24, "center", "top"),
-             (30, 12, "left", "center"), (-30, 12, "right", "center")]
+             (-14, 0, "right", "center")]
+    for r in (24, 40, 56):
+        spots += [(0, r, "center", "bottom"), (0, -r, "center", "top"), (r, r / 2, "left", "center"),
+                  (-r, r / 2, "right", "center"), (r, -r / 2, "left", "center"), (-r, -r / 2, "right", "center")]
+
+    def overlap(box):
+        return sum(max(0, min(box.x1, b.x1) - max(box.x0, b.x0)) * max(0, min(box.y1, b.y1) - max(box.y0, b.y0))
+                   for b in placed)
+
     for r in cortical.abs().nlargest(n_labels).index:
         pts = geo.patch_xy[largest_piece(region_of[vno] == r, geo.patch_faces)]
         xy = pts[np.argmin(((pts - pts.mean(0)) ** 2).sum(1))]   # a vertex inside the piece
-        for k, (dx, dy, ha, va) in enumerate(spots):
+        best = None
+        for dx, dy, ha, va in spots:
             ann = ax.annotate(r, xy, xytext=(dx, dy), textcoords="offset points", ha=ha, va=va,
                               fontsize=7, color=INK, arrowprops=dict(arrowstyle="-", color=INK, lw=0.5),
                               bbox=dict(boxstyle="round,pad=0.15", fc="white", ec="none", alpha=0.8))
             box = ann.get_window_extent(renderer).expanded(1.25, 1.5)
-            if not any(box.overlaps(b) for b in placed) or k == len(spots) - 1:
-                placed.append(box)
+            cost = overlap(box)
+            if best is None or cost < best[0]:
+                if best is not None:
+                    best[1].remove()
+                best = (cost, ann, box)
+            else:
+                ann.remove()
+            if cost == 0:
                 break
-            ann.remove()
+        placed.append(best[2])
 
     # Amygdala / hippocampus in a ventral glass brain, in the map's empty bottom-left corner.
     subcortical = [r for r in outside.index if r in ASEG_LABELS and r not in NOT_SHOWN]
