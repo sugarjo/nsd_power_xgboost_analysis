@@ -48,6 +48,7 @@ import nibabel as nib
 import nibabel.freesurfer as fs
 import numpy as np
 import pandas as pd
+from scipy import stats as sps
 from matplotlib.colors import LinearSegmentedColormap, Normalize, TwoSlopeNorm, to_rgb
 from scipy.sparse import coo_matrix
 from scipy.sparse.csgraph import connected_components
@@ -89,14 +90,20 @@ def subject_means(signed: pd.DataFrame, missing: pd.DataFrame, level: str,
 
 
 def pool(subj: pd.DataFrame, n_boot: int, seed: int = 0) -> pd.DataFrame:
-    """Mean over subjects with a 95% bootstrap CI over subjects (step 4)."""
+    """Mean over subjects with 95% CIs over subjects (step 4).
+
+    ci_low/ci_high: percentile bootstrap (resampling subjects).
+    t_low/t_high:   mean +- t(0.975, n-1) * SD / sqrt(n); better calibrated
+                    than the bootstrap for few subjects (NaN for n < 2)."""
     rng = np.random.default_rng(seed)
     rows = {}
     for col, v in subj.items():
         v = v.dropna().to_numpy()
-        boot = rng.choice(v, (n_boot, len(v))).mean(1)
-        rows[col] = dict(mean=v.mean(), ci_low=np.percentile(boot, 2.5),
-                         ci_high=np.percentile(boot, 97.5), n_subjects=len(v))
+        n = len(v)
+        boot = rng.choice(v, (n_boot, n)).mean(1)
+        half = sps.t.ppf(0.975, n - 1) * v.std(ddof=1) / np.sqrt(n) if n > 1 else np.nan
+        rows[col] = dict(mean=v.mean(), ci_low=np.percentile(boot, 2.5), ci_high=np.percentile(boot, 97.5),
+                         t_low=v.mean() - half, t_high=v.mean() + half, n_subjects=n)
     return pd.DataFrame(rows).T.astype({"n_subjects": int})
 
 
@@ -133,7 +140,7 @@ def load_flatmap(cache: Path) -> SimpleNamespace:
 
 
 def draw_region_map(ax, geo, values: pd.Series, norm, n_labels=0, inset_labels=True, cmap=DIVERGING,
-                    regions: dict | None = None):
+                    regions: dict | None = None, highlight=()):
     """Colour HCP-MMP1 parcels by value; regions outside the atlas go in an inset.
 
     values: region -> value, only for the regions to show (others dark gray).
@@ -159,6 +166,12 @@ def draw_region_map(ax, geo, values: pd.Series, norm, n_labels=0, inset_labels=T
     rgb[parcel == ""] = np.where((sulc[parcel == ""] > 0)[:, None], SULCUS, GYRUS)  # medial wall
     rgb[has] = cmap(norm(vals[has]))[:, :3] * np.where(sulc[has] > 0, 0.9, 1.0)[:, None]
     rgb[border & has] = rgb[border & has] * 0.6 + 0.4 * np.array(to_rgb(INK))
+    if len(highlight):
+        # outline: the region's border vertices plus one ring inside, in solid ink
+        inside = np.isin(region_of, list(highlight))
+        ring = np.zeros(len(parcel), bool)
+        ring[geo.faces[(inside & border)[geo.faces].any(1)].ravel()] = True
+        rgb[inside & ring] = np.array(to_rgb(INK))
     draw_flat(ax, geo.patch_xy, geo.patch_faces, rgb[vno])
 
     placed = []
@@ -182,7 +195,8 @@ def draw_region_map(ax, geo, values: pd.Series, norm, n_labels=0, inset_labels=T
         colors = {r: np.array(cmap(norm(outside[r]))[:3]) for r in subcortical}
         sub = ax.inset_axes([-0.04, 0.0, 0.34, 0.38])
         draw_glass_brain(sub, geo.pial_v, geo.faces, ghost, {r: geo.meshes[r] for r in subcortical},
-                         colors, "Ventral", {r: r.replace("Hippocampus-", "HC\n") for r in subcortical} if inset_labels else None)
+                         colors, "Ventral", {r: r.replace("Hippocampus-", "HC\n") + (" *" if r in highlight else "")
+                                             for r in subcortical} if inset_labels else None)
         if inset_labels:
             sub.set_title("Outside HCP-MMP1 (ventral view)", fontsize=7, color=INK_MUTED, pad=2)
 
@@ -280,7 +294,9 @@ def main():
                           left=0.07, right=0.98, top=0.93, bottom=0.1)
 
     ax = fig.add_subplot(gs[0])
-    draw_region_map(ax, geo, shown["mean"], norm, n_labels=6, cmap=cmap, regions=regions)
+    # signed measure: outline regions whose 95% t-CI over subjects excludes 0
+    marked = [] if absolute else list(shown.index[(shown["t_low"] > 0) | (shown["t_high"] < 0)])
+    draw_region_map(ax, geo, shown["mean"], norm, n_labels=6, cmap=cmap, regions=regions, highlight=marked)
     ax.set_title("A   Regions" + (", low-coverage parcels merged" if regions else "")
                  + " (flatmap, left hemisphere; hemispheres pooled)",
                  fontsize=10, color=INK, loc="left")
@@ -295,10 +311,13 @@ def main():
                  fontsize=8, color=INK)
 
     # Swatch for parcels below the subject threshold, left of the colour bar.
-    leg = ax.inset_axes([0.3, -0.07, 0.25, 0.03])
+    leg = ax.inset_axes([0.22, -0.07, 0.25, 0.03])
     leg.set_xlim(0, 1); leg.set_ylim(0, 1); leg.axis("off")
     leg.add_patch(plt.Rectangle((0, 0), 0.08, 1, facecolor=NO_DATA_GYRUS, edgecolor=AXIS, lw=0.5))
     leg.text(0.11, 0.5, f"Fewer than {args.min_subjects} subjects", fontsize=7, color=INK, va="center")
+    if not absolute:
+        leg.add_patch(plt.Rectangle((0, -1.6), 0.08, 1, facecolor="white", edgecolor=INK, lw=1.5, clip_on=False))
+        leg.text(0.11, -1.1, "95% t-CI excludes 0 (uncorrected)", fontsize=7, color=INK, va="center")
 
     # Bars use the map's colormap on their own symmetric scale (the map's clipped
     # scale would saturate them).
@@ -314,13 +333,15 @@ def main():
     what = ("|SHAP(new) − (SHAP(recent) + SHAP(old))/2|, NaN features left out; per trial summed within a "
             "region/band/second, then made absolute, " if absolute else
             "Mean-contrast SHAP, NaN features left out; per trial summed within a region/band/second, ")
-    fig.text(0.07, -0.02 if regions else 0.005,
+    fig.text(0.07, 0.005 - 0.022 * (bool(regions) + (not absolute)),
              what +
              f"averaged within subject (new and repeated trials weighted equally), then across {n_subj} subjects.\n" +
              (f"A: parcels with <{args.min_subjects} subjects merged with neighbours ({args.merged.name}), "
               f"SHAP summed within each merged region;\n   " if regions else "A: ") +
              f"{len(shown)} regions with ≥{args.min_subjects} subjects "
              f"({len(region) - len(shown)} with fewer shown dark gray); top 6 by |value| named; "
+             + ("" if absolute else f"\n   {len(marked)} outlined (or * in the inset): 95% t-CI over subjects excludes 0, "
+                                   f"not corrected for multiple regions; ") +
              f"colour scale clipped at {'' if absolute else '±'}{vmax:.3f} (98th percentile of |value|).\n"
              f"B: per band and second; map colormap on its own scale ({'0–' if absolute else '±'}{bar_max:.3f}); bars = mean over subjects, whiskers = 95% bootstrap CI over subjects, dots = subjects.",
              fontsize=7.5, color=INK_MUTED)
