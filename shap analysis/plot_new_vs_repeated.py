@@ -157,7 +157,7 @@ def draw_region_map(ax, geo, values: pd.Series, norm, n_labels=0, inset_labels=T
         colors = {r: np.array(DIVERGING(norm(outside[r]))[:3]) for r in subcortical}
         sub = ax.inset_axes([-0.04, 0.0, 0.34, 0.38])
         draw_glass_brain(sub, geo.pial_v, geo.faces, ghost, {r: geo.meshes[r] for r in subcortical},
-                         colors, "Ventral", {r: r for r in subcortical} if inset_labels else None)
+                         colors, "Ventral", {r: r.replace("-", "\n") for r in subcortical} if inset_labels else None)
         if inset_labels:
             sub.set_title("Outside HCP-MMP1 (ventral view)", fontsize=7, color=INK_MUTED, pad=2)
 
