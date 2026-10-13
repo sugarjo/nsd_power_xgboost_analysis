@@ -1,6 +1,7 @@
 """Collapse the 3-class SHAP values to one signed new-vs-repetition value.
 
-data["models"]["shap_values"] has shape (trials, features, classes) with the
+data["models"]["test_shap_values"] (older files: "shap_values") has shape
+(trials, features, classes) with the
 classes new (0), recent (1) and old (2); its rows follow
 data["models"]["test_data"] and its features follow data["features"] without
 the last column (subject_stratification). The values are in the model's
@@ -51,7 +52,7 @@ def feature_columns(names) -> pd.MultiIndex:
 
 def signed_shap(data: dict) -> dict:
     models = data["models"]
-    shap = models["shap_values"]
+    shap = models["test_shap_values"] if "test_shap_values" in models else models["shap_values"]
     test = models["test_data"]
     names = list(models["xgboost"].feature_names_in_)
     assert shap.shape[:2] == (len(test), len(names))

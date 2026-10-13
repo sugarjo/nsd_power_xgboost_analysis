@@ -34,6 +34,8 @@ import numpy as np
 import pandas as pd
 from matplotlib.colors import TwoSlopeNorm
 
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from plot_new_vs_repeated import load_flatmap, pool
 from plot_region_band_second import BAND_NAMES, ORDINAL, map_grid, panel
 from signed_shap import feature_columns

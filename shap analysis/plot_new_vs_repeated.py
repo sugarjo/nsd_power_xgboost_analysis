@@ -1,13 +1,20 @@
 """Which regions, frequency bands and seconds drive the new vs repeated decision.
 
-Uses the signed mean-contrast SHAP values from signed_shap.py (recent and old
-pooled as "repeated"; > 0 means the feature pushed the trial towards its
-correct label, new or repeated). The stored SHAP values are used as they are.
+Uses the mean-contrast SHAP values from signed_shap.py: recent and old are
+pooled as "repeated", new_vs_rep = SHAP(new) - (SHAP(recent) + SHAP(old)) / 2.
+The stored SHAP values are used as they are. Two measures (--measure):
+
+  signed  new_vs_rep with its sign flipped on repeated trials, so > 0 means the
+          feature pushed the trial towards its correct label (net help).
+  abs     |new_vs_rep|: how strongly the feature moves the new vs repeated
+          decision, in either direction (importance, as in a SHAP bar plot).
 
 Aggregation, for each of region / band / second:
   1. Features that are NaN on a trial are dropped (their SHAP is not counted).
-  2. Per trial, the remaining signed SHAP values of the group are summed
-     (SHAP is additive, so this is the group's net contribution to the trial).
+  2. Per trial, the remaining SHAP values of the group are summed (SHAP is
+     additive, so this is the group's net contribution to the trial); for
+     "abs" the absolute value of that sum is taken, so opposite pushes within
+     a group cancel before the magnitude is measured.
   3. Per subject, the trial values are averaged separately over new and over
      repeated trials, and the two means are averaged, so both labels weigh
      equally whatever the trial counts. Trials where the group has no present
@@ -24,7 +31,7 @@ Panel B: net contribution of each frequency band, split into its two seconds
 (one bar per band x second, side by side). Bars are coloured with the map's
 colormap on their own symmetric scale; dots are the individual subjects.
 
-Written to --out-dir:
+Written to --out-dir (suffix "_abs" for --measure abs):
   new_vs_repeated_contributions.png
   new_vs_repeated_{region,band,second,band_second}.csv   mean, CI and number of subjects
 """
@@ -41,13 +48,13 @@ import nibabel as nib
 import nibabel.freesurfer as fs
 import numpy as np
 import pandas as pd
-from matplotlib.colors import LinearSegmentedColormap, TwoSlopeNorm, to_rgb
+from matplotlib.colors import LinearSegmentedColormap, Normalize, TwoSlopeNorm, to_rgb
 from scipy.sparse import coo_matrix
 from scipy.sparse.csgraph import connected_components
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent
-sys.path.insert(0, str(REPO / "electrode coverages"))
+sys.path[:0] = [str(HERE), str(REPO / "electrode coverages")]
 from plot_electrode_coverage import (ASEG_LABELS, NOT_SHOWN, GYRUS, INK, INK_MUTED, SULCUS,  # noqa: E402
                                      aseg_meshes, draw_flat, draw_glass_brain,
                                      fetch_fsaverage, orient_flatmap, parcel_border,
@@ -59,16 +66,22 @@ BAND_LABELS = {"GammaL": "Low γ", "GammaH": "High γ"}
 # Diverging blue <-> red with a neutral gray midpoint.
 DIVERGING = LinearSegmentedColormap.from_list(
     "blue_gray_red", ["#0d366b", "#2a78d6", "#9ec5f4", "#f0efec", "#f3a9a8", "#e34948", "#8f1f1f"])
+# Sequential gray -> red for the absolute measure (no sign to show).
+SEQUENTIAL = LinearSegmentedColormap.from_list(
+    "gray_red", ["#f0efec", "#f3a9a8", "#e34948", "#8f1f1f", "#4d0f0f"])
 BAR, DOT = "#2a78d6", "#52514e"
 # Parcels with too few subjects: darker than any colour on the map's scale.
 NO_DATA_GYRUS, NO_DATA_SULCUS = np.array(to_rgb("#b4b3ae")), np.array(to_rgb("#9c9b96"))
 GRID, AXIS = "#e1e0d9", "#c3c2b7"
 
 
-def subject_means(signed: pd.DataFrame, missing: pd.DataFrame, level: str) -> pd.DataFrame:
-    """Subject x group table of label-balanced mean net contributions (steps 1-3)."""
+def subject_means(signed: pd.DataFrame, missing: pd.DataFrame, level: str,
+                  absolute: bool = False) -> pd.DataFrame:
+    """Subject x group table of label-balanced mean contributions (steps 1-3)."""
     values = signed.where(~missing.to_numpy())
     per_trial = values.T.groupby(level=level).sum(min_count=1).T     # NaN if group absent
+    if absolute:
+        per_trial = per_trial.abs()
     idx = signed.index
     label = np.where(idx.get_level_values("image_category") == NEW_CATEGORY, "new", "repeated")
     by_label = per_trial.groupby([idx.get_level_values("subject"), label]).mean()
@@ -119,7 +132,7 @@ def load_flatmap(cache: Path) -> SimpleNamespace:
                            patch_xy=orient_flatmap(patch_xy, parcel[vno]), meshes={})
 
 
-def draw_region_map(ax, geo, values: pd.Series, norm, n_labels=0, inset_labels=True):
+def draw_region_map(ax, geo, values: pd.Series, norm, n_labels=0, inset_labels=True, cmap=DIVERGING):
     """Colour HCP-MMP1 parcels by value; regions outside the atlas go in an inset.
 
     values: region -> value, only for the regions to show (others dark gray).
@@ -133,7 +146,7 @@ def draw_region_map(ax, geo, values: pd.Series, norm, n_labels=0, inset_labels=T
     has = ~np.isnan(vals)
     rgb = np.where((sulc > 0)[:, None], NO_DATA_SULCUS, NO_DATA_GYRUS)
     rgb[parcel == ""] = np.where((sulc[parcel == ""] > 0)[:, None], SULCUS, GYRUS)  # medial wall
-    rgb[has] = DIVERGING(norm(vals[has]))[:, :3] * np.where(sulc[has] > 0, 0.9, 1.0)[:, None]
+    rgb[has] = cmap(norm(vals[has]))[:, :3] * np.where(sulc[has] > 0, 0.9, 1.0)[:, None]
     rgb[geo.border & has] = rgb[geo.border & has] * 0.6 + 0.4 * np.array(to_rgb(INK))
     draw_flat(ax, geo.patch_xy, geo.patch_faces, rgb[vno])
 
@@ -142,11 +155,12 @@ def draw_region_map(ax, geo, values: pd.Series, norm, n_labels=0, inset_labels=T
         pts = geo.patch_xy[largest_piece(parcel[vno] == r, geo.patch_faces)]
         xy = pts[np.argmin(((pts - pts.mean(0)) ** 2).sum(1))]   # a vertex inside the piece
         # label above the parcel, or below it when a label above would collide
-        crowded = any(np.hypot(*(xy - q)) < 30 and q[1] >= xy[1] for q in placed)
+        crowded = any(np.hypot(*(xy - q)) < 30 for q in placed)
         placed.append(xy)
         ax.annotate(r, xy, xytext=(0, -12 if crowded else 10),
                     textcoords="offset points", ha="center", va="top" if crowded else "baseline",
-                    fontsize=7, color=INK, arrowprops=dict(arrowstyle="-", color=INK, lw=0.5))
+                    fontsize=7, color=INK, arrowprops=dict(arrowstyle="-", color=INK, lw=0.5),
+                    bbox=dict(boxstyle="round,pad=0.15", fc="white", ec="none", alpha=0.8))
 
     # Amygdala / hippocampus in a ventral glass brain, in the map's empty bottom-left corner.
     subcortical = [r for r in outside.index if r in ASEG_LABELS and r not in NOT_SHOWN]
@@ -154,10 +168,10 @@ def draw_region_map(ax, geo, values: pd.Series, norm, n_labels=0, inset_labels=T
         missing = [r for r in subcortical if r not in geo.meshes]
         geo.meshes.update(aseg_meshes(geo.paths["aseg.mgz"], missing) if missing else {})
         ghost = np.where((sulc > 0)[:, None], SULCUS, GYRUS) * 0.25 + 0.75
-        colors = {r: np.array(DIVERGING(norm(outside[r]))[:3]) for r in subcortical}
+        colors = {r: np.array(cmap(norm(outside[r]))[:3]) for r in subcortical}
         sub = ax.inset_axes([-0.04, 0.0, 0.34, 0.38])
         draw_glass_brain(sub, geo.pial_v, geo.faces, ghost, {r: geo.meshes[r] for r in subcortical},
-                         colors, "Ventral", {r: r.replace("-", "\n") for r in subcortical} if inset_labels else None)
+                         colors, "Ventral", {r: r.replace("Hippocampus-", "HC\n") for r in subcortical} if inset_labels else None)
         if inset_labels:
             sub.set_title("Outside HCP-MMP1 (ventral view)", fontsize=7, color=INK_MUTED, pad=2)
 
@@ -173,7 +187,8 @@ def style_axis(ax):
     ax.axhline(0, color=AXIS, lw=0.8)
 
 
-def band_second_panel(ax, subj: pd.DataFrame, stats: pd.DataFrame, norm):
+def band_second_panel(ax, subj: pd.DataFrame, stats: pd.DataFrame, norm, cmap=DIVERGING,
+                      ylabel="Net signed SHAP (log-odds)"):
     """One bar per band x second: the two seconds of a band side by side.
 
     Bars carry the map's colormap (value), so the second is told by position
@@ -186,7 +201,7 @@ def band_second_panel(ax, subj: pd.DataFrame, stats: pd.DataFrame, norm):
             ticks.append((band, sec))
     x = np.array(x)
     s = stats.loc[ticks]
-    ax.bar(x, s["mean"], width=width, color=DIVERGING(norm(s["mean"].to_numpy(float))), zorder=2)
+    ax.bar(x, s["mean"], width=width, color=cmap(norm(s["mean"].to_numpy(float))), zorder=2)
     ax.errorbar(x, s["mean"], yerr=[s["mean"] - s["ci_low"], s["ci_high"] - s["mean"]],
                 fmt="none", ecolor=INK, elinewidth=1.2, capsize=2.5, zorder=4)
     rng = np.random.default_rng(1)
@@ -200,7 +215,7 @@ def band_second_panel(ax, subj: pd.DataFrame, stats: pd.DataFrame, norm):
     for i, band in enumerate(BANDS):
         ax.text(i, -0.1, BAND_LABELS.get(band, band), transform=ax.get_xaxis_transform(),
                 ha="center", va="top", fontsize=9, color=INK)
-    ax.set_ylabel("Net signed SHAP (log-odds)", fontsize=8, color=INK)
+    ax.set_ylabel(ylabel, fontsize=8, color=INK)
     ax.set_title("B   Frequency bands, split by second", fontsize=10, color=INK, loc="left")
 
 def main():
@@ -210,17 +225,21 @@ def main():
     ap.add_argument("--cache", type=Path, default=REPO / "data" / "fsaverage")
     ap.add_argument("--min-subjects", type=int, default=3)
     ap.add_argument("--n-boot", type=int, default=10000)
+    ap.add_argument("--measure", choices=["signed", "abs"], default="signed",
+                    help="signed: net push towards the correct label; abs: |new vs repeated| importance")
     args = ap.parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)
+    absolute = args.measure == "abs"
+    suffix = "_abs" if absolute else ""
 
     out = signed_shap(pd.read_pickle(args.pkl))
-    signed, missing = out["signed"], out["missing"]
+    values, missing = (out["new_vs_rep"] if absolute else out["signed"]), out["missing"]
     levels = {"region": "region", "band": "band", "second": "second", "band_second": ["band", "second"]}
-    subj = {name: subject_means(signed, missing, lvl) for name, lvl in levels.items()}
+    subj = {name: subject_means(values, missing, lvl, absolute) for name, lvl in levels.items()}
     stats = {name: pool(s, args.n_boot) for name, s in subj.items()}
     stats["band_second"].index.names = ["band", "second"]
     for name, s in stats.items():
-        s.to_csv(args.out_dir / f"new_vs_repeated_{name}.csv")
+        s.to_csv(args.out_dir / f"new_vs_repeated{suffix}_{name}.csv")
 
     region = stats["region"]
     shown = region[region["n_subjects"] >= args.min_subjects]
@@ -229,23 +248,25 @@ def main():
     # 98th percentile of |mean| so a single region does not wash out the rest;
     # the colour bar marks the clipped ends.
     vmax = np.percentile(np.abs(shown["mean"]), 98)
-    norm = TwoSlopeNorm(0, -vmax, vmax)
+    cmap = SEQUENTIAL if absolute else DIVERGING
+    norm = Normalize(0, vmax) if absolute else TwoSlopeNorm(0, -vmax, vmax)
 
     fig = plt.figure(figsize=(12, 9.2), facecolor="white")
     gs = fig.add_gridspec(2, 1, height_ratios=[1.55, 1], hspace=0.28,
                           left=0.07, right=0.98, top=0.93, bottom=0.1)
 
     ax = fig.add_subplot(gs[0])
-    draw_region_map(ax, geo, shown["mean"], norm, n_labels=6)
+    draw_region_map(ax, geo, shown["mean"], norm, n_labels=6, cmap=cmap)
     ax.set_title("A   Regions (flatmap, left hemisphere; hemispheres pooled)",
                  fontsize=10, color=INK, loc="left")
 
     cax = ax.inset_axes([0.6, -0.07, 0.28, 0.03])
-    cb = fig.colorbar(plt.cm.ScalarMappable(norm=norm, cmap=DIVERGING), cax=cax,
-                      orientation="horizontal", extend="both")
+    cb = fig.colorbar(plt.cm.ScalarMappable(norm=norm, cmap=cmap), cax=cax,
+                      orientation="horizontal", extend="max" if absolute else "both")
     cb.outline.set_visible(False)
     cb.ax.tick_params(labelsize=7, colors=INK_MUTED, length=0)
-    cb.set_label("Net signed SHAP per region (log-odds); > 0 helps the correct new/repeated call",
+    cb.set_label("Mean |SHAP new − repeated| per region (log-odds)" if absolute else
+                 "Net signed SHAP per region (log-odds); > 0 helps the correct new/repeated call",
                  fontsize=8, color=INK)
 
     # Swatch for parcels below the subject threshold, left of the colour bar.
@@ -258,21 +279,27 @@ def main():
     # scale would saturate them).
     bar_max = np.abs(stats["band_second"]["mean"]).max()
     band_second_panel(fig.add_subplot(gs[1]), subj["band_second"], stats["band_second"],
-                      TwoSlopeNorm(0, -bar_max, bar_max))
+                      Normalize(0, bar_max) if absolute else TwoSlopeNorm(0, -bar_max, bar_max), cmap,
+                      "Mean |SHAP new − repeated| (log-odds)" if absolute else "Net signed SHAP (log-odds)")
 
     n_subj = len(subj["band"])
-    fig.suptitle("What drives the model's new vs repeated (recent + old) decision",
+    fig.suptitle("How strongly each region, band and second drives the new vs repeated (recent + old) decision"
+                 if absolute else "What drives the model's new vs repeated (recent + old) decision",
                  fontsize=13, color=INK, x=0.07, ha="left")
+    what = ("|SHAP(new) − (SHAP(recent) + SHAP(old))/2|, NaN features left out; per trial summed within a "
+            "region/band/second, then made absolute, " if absolute else
+            "Mean-contrast SHAP, NaN features left out; per trial summed within a region/band/second, ")
     fig.text(0.07, 0.005,
-             f"Mean-contrast SHAP, NaN features left out; per trial summed within a region/band/second, "
+             what +
              f"averaged within subject (new and repeated trials weighted equally), then across {n_subj} subjects.\n"
              f"A: {len(shown)} regions with ≥{args.min_subjects} subjects "
              f"({len(region) - len(shown)} with fewer shown dark gray); top 6 by |value| named; "
-             f"colour scale clipped at ±{vmax:.3f} (98th percentile of |value|).\n"
-             f"B: per band and second; map colormap on its own scale (±{bar_max:.3f}); bars = mean over subjects, whiskers = 95% bootstrap CI over subjects, dots = subjects.",
+             f"colour scale clipped at {'' if absolute else '±'}{vmax:.3f} (98th percentile of |value|).\n"
+             f"B: per band and second; map colormap on its own scale ({'0–' if absolute else '±'}{bar_max:.3f}); bars = mean over subjects, whiskers = 95% bootstrap CI over subjects, dots = subjects.",
              fontsize=7.5, color=INK_MUTED)
-    fig.savefig(args.out_dir / "new_vs_repeated_contributions.png", dpi=200, bbox_inches="tight")
-    print("wrote", args.out_dir / "new_vs_repeated_contributions.png")
+    path = args.out_dir / f"new_vs_repeated_contributions{suffix}.png"
+    fig.savefig(path, dpi=200, bbox_inches="tight")
+    print("wrote", path)
     print(stats["band_second"].round(4).to_string())
 
 

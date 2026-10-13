@@ -25,6 +25,8 @@ import numpy as np
 import pandas as pd
 from matplotlib.colors import TwoSlopeNorm
 
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from plot_new_vs_repeated import (AXIS, BANDS, DIVERGING, INK, INK_MUTED, NO_DATA_GYRUS,
                                   draw_region_map, load_flatmap, pool, subject_means)
 from signed_shap import signed_shap
