@@ -151,7 +151,7 @@ def fdr_bh(p: pd.Series) -> pd.Series:
 
 
 def draw_region_map(ax, geo, values: pd.Series, norm, n_labels=0, inset_labels=True, cmap=DIVERGING,
-                    regions: dict | None = None, highlight=()):
+                    regions: dict | None = None):
     """Colour HCP-MMP1 parcels by value; regions outside the atlas go in an inset.
 
     values: region -> value, only for the regions to show (others dark gray).
@@ -177,12 +177,6 @@ def draw_region_map(ax, geo, values: pd.Series, norm, n_labels=0, inset_labels=T
     rgb[parcel == ""] = np.where((sulc[parcel == ""] > 0)[:, None], SULCUS, GYRUS)  # medial wall
     rgb[has] = cmap(norm(vals[has]))[:, :3] * np.where(sulc[has] > 0, 0.9, 1.0)[:, None]
     rgb[border & has] = rgb[border & has] * 0.6 + 0.4 * np.array(to_rgb(INK))
-    if len(highlight):
-        # outline: the region's border vertices plus one ring inside, in solid ink
-        inside = np.isin(region_of, list(highlight))
-        ring = np.zeros(len(parcel), bool)
-        ring[geo.faces[(inside & border)[geo.faces].any(1)].ravel()] = True
-        rgb[inside & ring] = np.array(to_rgb(INK))
     draw_flat(ax, geo.patch_xy, geo.patch_faces, rgb[vno])
 
     placed = []
@@ -206,8 +200,7 @@ def draw_region_map(ax, geo, values: pd.Series, norm, n_labels=0, inset_labels=T
         colors = {r: np.array(cmap(norm(outside[r]))[:3]) for r in subcortical}
         sub = ax.inset_axes([-0.04, 0.0, 0.34, 0.38])
         draw_glass_brain(sub, geo.pial_v, geo.faces, ghost, {r: geo.meshes[r] for r in subcortical},
-                         colors, "Ventral", {r: r.replace("Hippocampus-", "HC\n") + (" *" if r in highlight else "")
-                                             for r in subcortical} if inset_labels else None)
+                         colors, "Ventral", {r: r.replace("Hippocampus-", "HC\n") for r in subcortical} if inset_labels else None)
         if inset_labels:
             sub.set_title("Outside HCP-MMP1 (ventral view)", fontsize=7, color=INK_MUTED, pad=2)
 
@@ -224,7 +217,7 @@ def style_axis(ax):
 
 
 def band_second_panel(ax, subj: pd.DataFrame, stats: pd.DataFrame, norm, cmap=DIVERGING,
-                      ylabel="Net signed SHAP (log-odds)"):
+                      ylabel="Net signed SHAP (log-odds)", q=None, fdr=0.05):
     """One bar per band x second: the two seconds of a band side by side.
 
     Bars carry the map's colormap (value), so the second is told by position
@@ -245,6 +238,16 @@ def band_second_panel(ax, subj: pd.DataFrame, stats: pd.DataFrame, norm, cmap=DI
         v = subj[key].dropna()
         ax.scatter(xi + rng.uniform(-0.11, 0.11, len(v)), v, s=8, color=DOT, alpha=0.55,
                    linewidths=0, zorder=3)
+    if q is not None:
+        # stars above the bars that are > 0 after FDR correction
+        top = max(s["ci_high"].max(), max(subj[k].max() for k in ticks))
+        for xi, key in zip(x, ticks):
+            qk = q.get(key, np.nan)
+            stars = "***" if qk < 0.001 else "**" if qk < 0.01 else "*" if qk < fdr else ""
+            if stars:
+                ax.text(xi, max(s.at[key, "ci_high"], subj[key].max()) + 0.03 * top, stars,
+                        ha="center", va="bottom", fontsize=9, color=INK)
+        ax.set_ylim(top=top * 1.12)
     style_axis(ax)
     ax.set_xlim(-0.6, len(BANDS) - 0.4)
     ax.set_xticks(x, [f"{sec} s" for _, sec in ticks], fontsize=7, color=INK_MUTED)
@@ -265,7 +268,7 @@ def main():
                     help="signed: net push towards the correct label; abs: |new vs repeated| importance")
     ap.add_argument("--merged", type=Path, nargs="?", const=REPO / "electrode coverages" / "figures" / "merged_regions.csv",
                     help="parcel -> merged region table (merge_low_coverage.py); SHAP is summed within merged regions")
-    ap.add_argument("--fdr", type=float, default=0.05, help="FDR level for outlining regions > 0 (signed measure)")
+    ap.add_argument("--fdr", type=float, default=0.05, help="FDR level for the band x second tests (signed measure)")
     args = ap.parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)
     absolute = args.measure == "abs"
@@ -306,12 +309,7 @@ def main():
                           left=0.07, right=0.98, top=0.93, bottom=0.1)
 
     ax = fig.add_subplot(gs[0])
-    # signed measure: outline regions with mean > 0 after FDR correction over the
-    # regions shown (one-sided t-test over subjects, Benjamini-Hochberg q < 0.05)
-    shown = shown.assign(q_greater=fdr_bh(shown["p_greater"]))
-    shown.to_csv(args.out_dir / f"new_vs_repeated{suffix}_region_tested.csv")
-    marked = [] if absolute else list(shown.index[shown["q_greater"] < args.fdr])
-    draw_region_map(ax, geo, shown["mean"], norm, n_labels=6, cmap=cmap, regions=regions, highlight=marked)
+    draw_region_map(ax, geo, shown["mean"], norm, n_labels=6, cmap=cmap, regions=regions)
     ax.set_title("A   Regions" + (", low-coverage parcels merged" if regions else "")
                  + " (flatmap, left hemisphere; hemispheres pooled)",
                  fontsize=10, color=INK, loc="left")
@@ -330,16 +328,22 @@ def main():
     leg.set_xlim(0, 1); leg.set_ylim(0, 1); leg.axis("off")
     leg.add_patch(plt.Rectangle((0, 0), 0.08, 1, facecolor=NO_DATA_GYRUS, edgecolor=AXIS, lw=0.5))
     leg.text(0.11, 0.5, f"Fewer than {args.min_subjects} subjects", fontsize=7, color=INK, va="center")
-    if not absolute:
-        leg.add_patch(plt.Rectangle((0, -1.6), 0.08, 1, facecolor="white", edgecolor=INK, lw=1.5, clip_on=False))
-        leg.text(0.11, -1.1, f"> 0, FDR q < {args.fdr:g} (one-sided)", fontsize=7, color=INK, va="center")
 
     # Bars use the map's colormap on their own symmetric scale (the map's clipped
     # scale would saturate them).
     bar_max = np.abs(stats["band_second"]["mean"]).max()
+    # signed measure: one-sided one-sample t-test per band x second over subjects
+    # (H1: mean > 0), Benjamini-Hochberg FDR across the 14 band x second bars
+    q = None
+    if not absolute:
+        bs = stats["band_second"].assign(q_greater=fdr_bh(stats["band_second"]["p_greater"]))
+        bs.to_csv(args.out_dir / f"new_vs_repeated{suffix}_band_second.csv")
+        q = bs["q_greater"]
+        print(bs[["mean", "p_greater", "q_greater", "n_subjects"]].round(5).to_string())
     band_second_panel(fig.add_subplot(gs[1]), subj["band_second"], stats["band_second"],
                       Normalize(0, bar_max) if absolute else TwoSlopeNorm(0, -bar_max, bar_max), cmap,
-                      "Mean |SHAP new − repeated| (log-odds)" if absolute else "Net signed SHAP (log-odds)")
+                      "Mean |SHAP new − repeated| (log-odds)" if absolute else "Net signed SHAP (log-odds)",
+                      q, args.fdr)
 
     n_subj = len(subj["band"])
     fig.suptitle("How strongly each region, band and second drives the new vs repeated (recent + old) decision"
@@ -355,15 +359,15 @@ def main():
               f"SHAP summed within each merged region;\n   " if regions else "A: ") +
              f"{len(shown)} regions with ≥{args.min_subjects} subjects "
              f"({len(region) - len(shown)} with fewer shown dark gray); top 6 by |value| named; "
-             + ("" if absolute else f"\n   {len(marked)} outlined (or * in the inset): mean > 0, one-sided one-sample t-test over subjects, "
-                                   f"Benjamini-Hochberg FDR q < {args.fdr:g} across the {len(shown)} regions shown; ") +
+             +
              f"colour scale clipped at {'' if absolute else '±'}{vmax:.3f} (98th percentile of |value|).\n"
-             f"B: per band and second; map colormap on its own scale ({'0–' if absolute else '±'}{bar_max:.3f}); bars = mean over subjects, whiskers = 95% bootstrap CI over subjects, dots = subjects.",
+             f"B: per band and second; map colormap on its own scale ({'0–' if absolute else '±'}{bar_max:.3f}); bars = mean over subjects, whiskers = 95% bootstrap CI over subjects, dots = subjects"
+             + ("." if absolute else f";\n   stars: mean > 0, one-sided one-sample t-test over subjects, Benjamini-Hochberg "
+                                     f"FDR across the 14 bars (* q < {args.fdr:g}, ** q < 0.01, *** q < 0.001)."),
              fontsize=7.5, color=INK_MUTED)
     path = args.out_dir / f"new_vs_repeated_contributions{suffix}.png"
     fig.savefig(path, dpi=200, bbox_inches="tight")
     print("wrote", path)
-    print(stats["band_second"].round(4).to_string())
 
 
 if __name__ == "__main__":
