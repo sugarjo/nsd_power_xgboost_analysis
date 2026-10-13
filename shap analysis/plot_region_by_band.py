@@ -11,6 +11,10 @@ One flatmap per band, all seven on one colour scale: symmetric, clipped at the
 fewer than --min-subjects subjects are dark gray. Amygdala and hippocampus
 are drawn in the ventral glass-brain inset of each map.
 
+--contrast recent_vs_consolidated contrasts SHAP(old) - SHAP(recent) instead
+(recent and consolidated weighted 1/2, 1/2; new trials left out) and writes the
+same files with the prefix recent_vs_consolidated.
+
 Written to --out-dir:
   new_vs_repeated_region_by_band.png
   new_vs_repeated_region_by_band.csv   mean, CI and number of subjects
@@ -28,10 +32,10 @@ from matplotlib.colors import TwoSlopeNorm
 
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from plot_new_vs_repeated import (AXIS, BALANCE, BANDS, DIVERGING, INK, INK_MUTED, NO_DATA_GYRUS,
+from plot_new_vs_repeated import (AXIS, BANDS, DIVERGING, INK, INK_MUTED, NO_DATA_GYRUS,
                                   draw_region_map, load_flatmap, merge_regions, pool,
                                   subject_means)
-from signed_shap import signed_shap
+from signed_shap import CONTRASTS, signed_shap
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent
@@ -43,6 +47,7 @@ def main():
     ap.add_argument("--pkl", type=Path, default=REPO / "random_data_bipolar_xgboost_3w.pkl")
     ap.add_argument("--out-dir", type=Path, default=HERE / "figures")
     ap.add_argument("--cache", type=Path, default=REPO / "data" / "fsaverage")
+    ap.add_argument("--contrast", choices=list(CONTRASTS), default="new_vs_repeated")
     ap.add_argument("--min-subjects", type=int, default=3)
     ap.add_argument("--n-boot", type=int, default=10000)
     ap.add_argument("--merged", type=Path, nargs="?", const=REPO / "electrode coverages" / "figures" / "merged_regions.csv",
@@ -50,15 +55,17 @@ def main():
     args = ap.parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)
 
-    out = signed_shap(pd.read_pickle(args.pkl))
+    C = CONTRASTS[args.contrast]
+    prefix = C["prefix"]
+    out = signed_shap(pd.read_pickle(args.pkl), args.contrast)
     values, missing, regions = out["signed"], out["missing"], None
     if args.merged:
         values, missing, regions = merge_regions(values, missing, args.merged)
     suffix = "_merged" if args.merged else ""
-    subj = subject_means(values, missing, ["region", "band"])
+    subj = subject_means(values, missing, ["region", "band"], weights=C["weights"])
     stats = pool(subj, args.n_boot)
     stats.index.names = ["region", "band"]
-    stats.to_csv(args.out_dir / f"new_vs_repeated{suffix}_region_by_band.csv")
+    stats.to_csv(args.out_dir / f"{prefix}{suffix}_region_by_band.csv")
 
     shown = stats[stats["n_subjects"] >= args.min_subjects]
     vmax = np.percentile(np.abs(shown["mean"]), 98)
@@ -81,7 +88,7 @@ def main():
                       orientation="horizontal", extend="both")
     cb.outline.set_visible(False)
     cb.ax.tick_params(labelsize=8, colors=INK_MUTED, length=0)
-    cb.set_label("Net signed SHAP per region and band (log-odds)\n> 0 helps the correct new/repeated call",
+    cb.set_label(f"Net signed SHAP per region and band (log-odds)\n> 0 helps the correct {C['call']} call",
                  fontsize=9, color=INK)
     key.add_patch(plt.Rectangle((0.1, 0.25), 0.04, 0.06, facecolor=NO_DATA_GYRUS, edgecolor=AXIS,
                                 lw=0.5, transform=key.transAxes))
@@ -89,18 +96,18 @@ def main():
              va="center", transform=key.transAxes)
 
     n_subj = subj.index.nunique()
-    fig.suptitle("Contribution of each region to the new vs repeated decision, per frequency band",
+    fig.suptitle(f"Contribution of each region to the {C['title']} decision, per frequency band",
                  fontsize=14, color=INK, x=0.02, ha="left")
     fig.text(0.02, 0.005,
-             f"Mean-contrast SHAP, NaN features left out; per trial summed over both seconds of a region's band, "
-             f"averaged within subject ({BALANCE}), then across {n_subj} subjects.\n"
+             f"{C['formula']}, NaN features left out; per trial summed over both seconds of a region's band, "
+             f"averaged within subject ({C['balance']}), then across {n_subj} subjects.\n"
              + (f"Parcels with <{args.min_subjects} subjects merged with neighbours ({args.merged.name}), SHAP summed "
                 f"within each merged region.\n" if args.merged else "") +
              f"Regions with ≥{args.min_subjects} subjects; top 3 per band by |value| named. One colour scale for all "
-             f"panels, clipped at ±{vmax:.3f} (98th percentile of |value| over all regions and bands).\n"
+             f"panels, clipped at ±{vmax:.2g} (98th percentile of |value| over all regions and bands).\n"
              f"Flatmap of the left hemisphere, hemispheres pooled.",
              fontsize=8, color=INK_MUTED)
-    path = args.out_dir / f"new_vs_repeated_region_by_band{suffix}.png"
+    path = args.out_dir / f"{prefix}_region_by_band{suffix}.png"
     fig.savefig(path, dpi=200, bbox_inches="tight")
     print("wrote", path)
 

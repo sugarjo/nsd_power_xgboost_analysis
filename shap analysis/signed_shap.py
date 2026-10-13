@@ -24,7 +24,7 @@ and it stays exactly additive. Summing recent and old instead would count
 Writes shap_new_vs_repetition.pkl next to this script (git-ignored), a dict:
   "signed"     DataFrame trials x features, index = test_data, columns =
                MultiIndex (region, band, second)
-  "new_vs_rep" same, before the sign flip
+  "new_vs_rep" same, before the sign flip (also as "contrast")
   "missing"    bool DataFrame, True where the feature was NaN for that trial
                (no channel in the region, or that second missing)
 """
@@ -41,6 +41,21 @@ REPO = HERE.parent
 NEW, RECENT, OLD = 0, 1, 2          # class order of the XGBClassifier
 NEW_CATEGORY = 1                    # image_category of a (correct) new trial
 
+# The contrasts the analysis can be run for. "weights" are the within-subject
+# weights of the trial types (see subject_means in plot_new_vs_repeated.py).
+CONTRASTS = {
+    "new_vs_repeated": dict(
+        prefix="new_vs_repeated", title="new vs repeated (recent + old)", short="new − repeated",
+        call="new/repeated", flipped="repeated", weights={"new": 0.5, "recent": 0.25, "old": 0.25},
+        balance="new, recent and old weighted 1/2, 1/4, 1/4",
+        formula="SHAP(new) − (SHAP(recent) + SHAP(old))/2"),
+    "recent_vs_consolidated": dict(
+        prefix="recent_vs_consolidated", title="recent vs consolidated (old)", short="consolidated − recent",
+        call="recent/consolidated", flipped="recent", weights={"recent": 0.5, "old": 0.5},
+        balance="recent and consolidated weighted 1/2, 1/2; new trials left out",
+        formula="SHAP(consolidated) − SHAP(recent)"),
+}
+
 
 def feature_columns(names) -> pd.MultiIndex:
     """'Amygdala | Alpha1' -> ('Amygdala', 'Alpha', 1)."""
@@ -50,23 +65,40 @@ def feature_columns(names) -> pd.MultiIndex:
         names=["region", "band", "second"])
 
 
-def signed_shap(data: dict) -> dict:
+def signed_shap(data: dict, contrast: str = "new_vs_repeated") -> dict:
+    """Per trial x feature contrast values; see the module docstring.
+
+    contrast "new_vs_repeated":        SHAP(new) - (SHAP(recent) + SHAP(old))/2
+                                        (> 0 pushes towards new), all trials.
+    contrast "recent_vs_consolidated": SHAP(old) - SHAP(recent)
+                                        (> 0 pushes towards consolidated/old),
+                                        recent and old trials only.
+    "signed" flips the sign on trials of the negative label, so > 0 is always a
+    push towards the trial's correct label."""
     models = data["models"]
     shap = models["test_shap_values"] if "test_shap_values" in models else models["shap_values"]
     test = models["test_data"]
     names = list(models["xgboost"].feature_names_in_)
     assert shap.shape[:2] == (len(test), len(names))
     assert names == list(data["features"].columns[:-1])
+    category = test.get_level_values("image_category").to_numpy()
 
-    repetition = (shap[..., RECENT] + shap[..., OLD]) / 2
-    new_vs_rep = shap[..., NEW] - repetition
-    is_new = test.get_level_values("image_category").to_numpy() == NEW_CATEGORY
-    signed = np.where(is_new[:, None], new_vs_rep, -new_vs_rep)
+    if contrast == "new_vs_repeated":
+        value = shap[..., NEW] - (shap[..., RECENT] + shap[..., OLD]) / 2
+        positive = category == NEW_CATEGORY
+    elif contrast == "recent_vs_consolidated":
+        keep = np.isin(category, [2, 3])                  # recent and old (consolidated) trials
+        shap, test, category = shap[keep], test[keep], category[keep]
+        value = shap[..., OLD] - shap[..., RECENT]
+        positive = category == 3
+    else:
+        raise ValueError(f"unknown contrast {contrast!r}")
+    signed = np.where(positive[:, None], value, -value)
 
     cols = feature_columns(names)
     frame = lambda a: pd.DataFrame(a.astype(np.float32), index=test, columns=cols)
     missing = data["features"].loc[test, names].isna().to_numpy()
-    return {"signed": frame(signed), "new_vs_rep": frame(new_vs_rep),
+    return {"signed": frame(signed), "contrast": frame(value), "new_vs_rep": frame(value),
             "missing": pd.DataFrame(missing, index=test, columns=cols)}
 
 

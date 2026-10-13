@@ -1,5 +1,11 @@
 """Which regions, frequency bands and seconds drive the new vs repeated decision.
 
+With --contrast recent_vs_consolidated the same analysis is run for recent vs
+consolidated (old) trials: SHAP(old) - SHAP(recent), new trials left out,
+recent and old weighted equally within subject; outputs are prefixed
+"recent_vs_consolidated" instead of "new_vs_repeated". Below, "new" / "repeated"
+read "consolidated" / "recent" for that contrast.
+
 Uses the mean-contrast SHAP values from signed_shap.py: recent and old are
 pooled as "repeated", new_vs_rep = SHAP(new) - (SHAP(recent) + SHAP(old)) / 2.
 The stored SHAP values are used as they are. Two measures (--measure):
@@ -61,11 +67,11 @@ from plot_electrode_coverage import (ASEG_LABELS, NOT_SHOWN, GYRUS, INK, INK_MUT
                                      aseg_meshes, draw_flat, draw_glass_brain,
                                      fetch_fsaverage, orient_flatmap, parcel_border,
                                      read_patch)
-from signed_shap import signed_shap  # noqa: E402
+from signed_shap import CONTRASTS, signed_shap  # noqa: E402
 
 BANDS = ["Delta", "Theta", "Alpha", "Beta", "GammaL", "GammaH", "Ripple"]
 LABELS = {1: "new", 2: "recent", 3: "old"}          # image_category of correct trials
-BALANCE = "new, recent and old weighted 1/2, 1/4, 1/4"
+BALANCE = "new, recent and old weighted 1/2, 1/4, 1/4"   # default contrast, see CONTRASTS
 BAND_LABELS = {"GammaL": "Low γ", "GammaH": "High γ"}
 # Diverging blue <-> red with a neutral gray midpoint.
 DIVERGING = LinearSegmentedColormap.from_list(
@@ -80,13 +86,13 @@ GRID, AXIS = "#e1e0d9", "#c3c2b7"
 
 
 def subject_means(signed: pd.DataFrame, missing: pd.DataFrame, level: str,
-                  absolute: bool = False) -> pd.DataFrame:
+                  absolute: bool = False, weights: dict | None = None) -> pd.DataFrame:
     """Subject x group table of label-balanced mean contributions (steps 1-3).
 
     Within a subject the trial values are averaged per trial type and combined
-    as 1/2 new + 1/4 recent + 1/4 old: new and repeated weigh equally, and so
-    do recent and old within repeated, whatever the trial counts. A subject
-    without trials of one type (for that group) is left out."""
+    with `weights` (default 1/2 new + 1/4 recent + 1/4 old: new and repeated
+    weigh equally, and so do recent and old within repeated, whatever the trial
+    counts). A subject without trials of one weighted type is left out."""
     values = signed.where(~missing.to_numpy())
     per_trial = values.T.groupby(level=level).sum(min_count=1).T     # NaN if group absent
     if absolute:
@@ -94,8 +100,8 @@ def subject_means(signed: pd.DataFrame, missing: pd.DataFrame, level: str,
     idx = signed.index
     label = pd.Series(idx.get_level_values("image_category")).map(LABELS).to_numpy()
     by_label = per_trial.groupby([idx.get_level_values("subject"), label]).mean()
-    m = {lab: by_label.xs(lab, level=1) for lab in ("new", "recent", "old")}
-    return (m["new"] + (m["recent"] + m["old"]) / 2) / 2
+    weights = weights or CONTRASTS["new_vs_repeated"]["weights"]
+    return sum(w * by_label.xs(lab, level=1) for lab, w in weights.items())
 
 
 def pool(subj: pd.DataFrame, n_boot: int, seed: int = 0) -> pd.DataFrame:
@@ -300,22 +306,25 @@ def main():
     ap.add_argument("--merged", type=Path, nargs="?", const=REPO / "electrode coverages" / "figures" / "merged_regions.csv",
                     help="parcel -> merged region table (merge_low_coverage.py); SHAP is summed within merged regions")
     ap.add_argument("--fdr", type=float, default=0.05, help="FDR level for the band x second tests (signed measure)")
+    ap.add_argument("--contrast", choices=list(CONTRASTS), default="new_vs_repeated")
     args = ap.parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)
     absolute = args.measure == "abs"
     suffix = ("_abs" if absolute else "") + ("_merged" if args.merged else "")
+    C = CONTRASTS[args.contrast]
+    prefix = C["prefix"]
 
-    out = signed_shap(pd.read_pickle(args.pkl))
-    values, missing = (out["new_vs_rep"] if absolute else out["signed"]), out["missing"]
+    out = signed_shap(pd.read_pickle(args.pkl), args.contrast)
+    values, missing = (out["contrast"] if absolute else out["signed"]), out["missing"]
     regions = None
     if args.merged:
         values, missing, regions = merge_regions(values, missing, args.merged)
     levels = {"region": "region", "band": "band", "second": "second", "band_second": ["band", "second"]}
-    subj = {name: subject_means(values, missing, lvl, absolute) for name, lvl in levels.items()}
+    subj = {name: subject_means(values, missing, lvl, absolute, C["weights"]) for name, lvl in levels.items()}
     stats = {name: pool(s, args.n_boot) for name, s in subj.items()}
     stats["band_second"].index.names = ["band", "second"]
     for name, s in stats.items():
-        s.to_csv(args.out_dir / f"new_vs_repeated{suffix}_{name}.csv")
+        s.to_csv(args.out_dir / f"{prefix}{suffix}_{name}.csv")
 
     region = stats["region"]
     shown = region[region["n_subjects"] >= args.min_subjects]
@@ -342,8 +351,8 @@ def main():
                       orientation="horizontal", extend="max" if absolute else "both")
     cb.outline.set_visible(False)
     cb.ax.tick_params(labelsize=7, colors=INK_MUTED, length=0)
-    cb.set_label("Mean |SHAP new − repeated| per region (log-odds)" if absolute else
-                 "Net signed SHAP per region (log-odds); > 0 helps the correct new/repeated call",
+    cb.set_label(f"Mean |SHAP {C['short']}| per region (log-odds)" if absolute else
+                 f"Net signed SHAP per region (log-odds); > 0 helps the correct {C['call']} call",
                  fontsize=8, color=INK)
 
     # Swatch for parcels below the subject threshold, left of the colour bar.
@@ -360,24 +369,25 @@ def main():
     q = None
     if not absolute:
         bs = stats["band_second"].assign(q_greater=fdr_bh(stats["band_second"]["p_greater"]))
-        bs.to_csv(args.out_dir / f"new_vs_repeated{suffix}_band_second.csv")
+        bs.to_csv(args.out_dir / f"{prefix}{suffix}_band_second.csv")
         q = bs["q_greater"]
         print(bs[["mean", "p_greater", "q_greater", "n_subjects"]].round(5).to_string())
     band_second_panel(fig.add_subplot(gs[1]), subj["band_second"], stats["band_second"],
                       Normalize(0, bar_max) if absolute else TwoSlopeNorm(0, -bar_max, bar_max), cmap,
-                      "Mean |SHAP new − repeated| (log-odds)" if absolute else "Net signed SHAP (log-odds)",
+                      f"Mean |SHAP {C['short']}| (log-odds)" if absolute else "Net signed SHAP (log-odds)",
                       q, args.fdr)
 
     n_subj = len(subj["band"])
-    fig.suptitle("How strongly each region, band and second drives the new vs repeated (recent + old) decision"
-                 if absolute else "What drives the model's new vs repeated (recent + old) decision",
+    fig.suptitle(f"How strongly each region, band and second drives the {C['title']} decision"
+                 if absolute else f"What drives the model's {C['title']} decision",
                  fontsize=13, color=INK, x=0.07, ha="left")
-    what = ("|SHAP(new) − (SHAP(recent) + SHAP(old))/2|, NaN features left out; per trial summed within a "
+    what = (f"|{C['formula']}|, NaN features left out; per trial summed within a "
             "region/band/second, then made absolute, " if absolute else
-            "Mean-contrast SHAP, NaN features left out; per trial summed within a region/band/second, ")
+            f"{C['formula']} (sign flipped on {C['flipped']} trials), NaN features left out; "
+            "per trial summed within a region/band/second, ")
     fig.text(0.07, 0.005 - 0.022 * (bool(regions) + (not absolute)),
              what +
-             f"averaged within subject ({BALANCE}), then across {n_subj} subjects.\n" +
+             f"averaged within subject ({C['balance']}), then across {n_subj} subjects.\n" +
              (f"A: parcels with <{args.min_subjects} subjects merged with neighbours ({args.merged.name}), "
               f"SHAP summed within each merged region;\n   " if regions else "A: ") +
              f"{len(shown)} regions with ≥{args.min_subjects} subjects "
@@ -388,7 +398,7 @@ def main():
              + ("." if absolute else f";\n   stars: mean > 0, one-sided one-sample t-test over subjects, Benjamini-Hochberg "
                                      f"FDR across the 14 bars (* q < {args.fdr:g}, ** q < 0.01, *** q < 0.001)."),
              fontsize=7.5, color=INK_MUTED)
-    path = args.out_dir / f"new_vs_repeated_contributions{suffix}.png"
+    path = args.out_dir / f"{prefix}_contributions{suffix}.png"
     fig.savefig(path, dpi=200, bbox_inches="tight")
     print("wrote", path)
 
