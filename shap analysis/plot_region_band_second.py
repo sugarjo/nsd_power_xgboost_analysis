@@ -87,7 +87,7 @@ def map_grid(geo, panel_values, titles, norm, cbar_label, min_subjects, title, f
     key.text(0.09, 0.5, f"Fewer than {min_subjects} subjects", fontsize=9, color=INK, va="center")
 
     fig.suptitle(title, fontsize=14, color=INK, x=0.02, y=1 - 0.15 / height, ha="left", va="top")
-    fig.text(0.02, -0.25 * bottom, footer, fontsize=8, color=INK_MUTED)
+    fig.text(0.02, -0.02 * bottom, footer, fontsize=8, color=INK_MUTED, va="top")
     return fig
 
 
