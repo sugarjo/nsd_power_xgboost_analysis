@@ -142,6 +142,20 @@ def load_flatmap(cache: Path) -> SimpleNamespace:
                            patch_xy=orient_flatmap(patch_xy, parcel[vno]), meshes={})
 
 
+def merge_regions(values: pd.DataFrame, missing: pd.DataFrame, table: Path):
+    """Rename each parcel column to its merged region (merge_low_coverage.py table).
+
+    SHAP is additive, so summing a merged region's features per trial (as
+    subject_means does) gives the merged region's contribution. Returns the
+    relabelled values and missing tables and the parcel -> region dict."""
+    regions = pd.read_csv(table, dtype=str).set_index("parcel")["region"].to_dict()
+    cols = values.columns
+    merged_cols = pd.MultiIndex.from_arrays(
+        [[regions.get(r, r) for r in cols.get_level_values("region")],
+         cols.get_level_values("band"), cols.get_level_values("second")], names=cols.names)
+    return values.set_axis(merged_cols, axis=1), missing.set_axis(merged_cols, axis=1), regions
+
+
 def fdr_bh(p: pd.Series) -> pd.Series:
     """Benjamini-Hochberg adjusted p-values (q-values); NaN stays NaN."""
     ok = p.dropna().sort_values()
@@ -179,17 +193,25 @@ def draw_region_map(ax, geo, values: pd.Series, norm, n_labels=0, inset_labels=T
     rgb[border & has] = rgb[border & has] * 0.6 + 0.4 * np.array(to_rgb(INK))
     draw_flat(ax, geo.patch_xy, geo.patch_faces, rgb[vno])
 
+    # Name the largest regions. Each label tries above, below, right, left, then
+    # further out, and takes the first spot whose text box overlaps no earlier label.
+    renderer = ax.figure.canvas.get_renderer()
     placed = []
+    spots = [(0, 10, "center", "bottom"), (0, -10, "center", "top"), (14, 0, "left", "center"),
+             (-14, 0, "right", "center"), (0, 24, "center", "bottom"), (0, -24, "center", "top"),
+             (30, 12, "left", "center"), (-30, 12, "right", "center")]
     for r in cortical.abs().nlargest(n_labels).index:
         pts = geo.patch_xy[largest_piece(region_of[vno] == r, geo.patch_faces)]
         xy = pts[np.argmin(((pts - pts.mean(0)) ** 2).sum(1))]   # a vertex inside the piece
-        # label above the parcel, or below it when a label above would collide
-        crowded = any(np.hypot(*(xy - q)) < 30 for q in placed)
-        placed.append(xy)
-        ax.annotate(r, xy, xytext=(0, -12 if crowded else 10),
-                    textcoords="offset points", ha="center", va="top" if crowded else "baseline",
-                    fontsize=7, color=INK, arrowprops=dict(arrowstyle="-", color=INK, lw=0.5),
-                    bbox=dict(boxstyle="round,pad=0.15", fc="white", ec="none", alpha=0.8))
+        for k, (dx, dy, ha, va) in enumerate(spots):
+            ann = ax.annotate(r, xy, xytext=(dx, dy), textcoords="offset points", ha=ha, va=va,
+                              fontsize=7, color=INK, arrowprops=dict(arrowstyle="-", color=INK, lw=0.5),
+                              bbox=dict(boxstyle="round,pad=0.15", fc="white", ec="none", alpha=0.8))
+            box = ann.get_window_extent(renderer).expanded(1.25, 1.5)
+            if not any(box.overlaps(b) for b in placed) or k == len(spots) - 1:
+                placed.append(box)
+                break
+            ann.remove()
 
     # Amygdala / hippocampus in a ventral glass brain, in the map's empty bottom-left corner.
     subcortical = [r for r in outside.index if r in ASEG_LABELS and r not in NOT_SHOWN]
@@ -278,15 +300,7 @@ def main():
     values, missing = (out["new_vs_rep"] if absolute else out["signed"]), out["missing"]
     regions = None
     if args.merged:
-        # rename each parcel to its merged region; SHAP is additive, so summing a
-        # merged region's features per trial gives its contribution
-        regions = pd.read_csv(args.merged, dtype=str).set_index("parcel")["region"].to_dict()
-        cols = values.columns
-        merged_cols = pd.MultiIndex.from_arrays(
-            [[regions.get(r, r) for r in cols.get_level_values("region")],
-             cols.get_level_values("band"), cols.get_level_values("second")], names=cols.names)
-        values = values.set_axis(merged_cols, axis=1)
-        missing = missing.set_axis(merged_cols, axis=1)
+        values, missing, regions = merge_regions(values, missing, args.merged)
     levels = {"region": "region", "band": "band", "second": "second", "band_second": ["band", "second"]}
     subj = {name: subject_means(values, missing, lvl, absolute) for name, lvl in levels.items()}
     stats = {name: pool(s, args.n_boot) for name, s in subj.items()}
