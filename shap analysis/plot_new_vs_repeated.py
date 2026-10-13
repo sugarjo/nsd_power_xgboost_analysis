@@ -94,16 +94,19 @@ def pool(subj: pd.DataFrame, n_boot: int, seed: int = 0) -> pd.DataFrame:
 
     ci_low/ci_high: percentile bootstrap (resampling subjects).
     t_low/t_high:   mean +- t(0.975, n-1) * SD / sqrt(n); better calibrated
-                    than the bootstrap for few subjects (NaN for n < 2)."""
+                    than the bootstrap for few subjects (NaN for n < 2).
+    p_greater:      one-sided one-sample t-test p-value for mean > 0."""
     rng = np.random.default_rng(seed)
     rows = {}
     for col, v in subj.items():
         v = v.dropna().to_numpy()
         n = len(v)
         boot = rng.choice(v, (n_boot, n)).mean(1)
-        half = sps.t.ppf(0.975, n - 1) * v.std(ddof=1) / np.sqrt(n) if n > 1 else np.nan
+        sem = v.std(ddof=1) / np.sqrt(n) if n > 1 else np.nan
+        half = sps.t.ppf(0.975, n - 1) * sem if n > 1 else np.nan
+        p_greater = sps.t.sf(v.mean() / sem, n - 1) if n > 1 and sem > 0 else np.nan
         rows[col] = dict(mean=v.mean(), ci_low=np.percentile(boot, 2.5), ci_high=np.percentile(boot, 97.5),
-                         t_low=v.mean() - half, t_high=v.mean() + half, n_subjects=n)
+                         t_low=v.mean() - half, t_high=v.mean() + half, p_greater=p_greater, n_subjects=n)
     return pd.DataFrame(rows).T.astype({"n_subjects": int})
 
 
@@ -137,6 +140,14 @@ def load_flatmap(cache: Path) -> SimpleNamespace:
     return SimpleNamespace(paths=paths, pial_v=pial_v, faces=faces, sulc=sulc, parcel=parcel,
                            border=parcel_border(labels, faces), vno=vno, patch_faces=patch_faces,
                            patch_xy=orient_flatmap(patch_xy, parcel[vno]), meshes={})
+
+
+def fdr_bh(p: pd.Series) -> pd.Series:
+    """Benjamini-Hochberg adjusted p-values (q-values); NaN stays NaN."""
+    ok = p.dropna().sort_values()
+    m = len(ok)
+    q = (ok * m / np.arange(1, m + 1)).iloc[::-1].cummin().iloc[::-1].clip(upper=1)
+    return q.reindex(p.index)
 
 
 def draw_region_map(ax, geo, values: pd.Series, norm, n_labels=0, inset_labels=True, cmap=DIVERGING,
@@ -254,6 +265,7 @@ def main():
                     help="signed: net push towards the correct label; abs: |new vs repeated| importance")
     ap.add_argument("--merged", type=Path, nargs="?", const=REPO / "electrode coverages" / "figures" / "merged_regions.csv",
                     help="parcel -> merged region table (merge_low_coverage.py); SHAP is summed within merged regions")
+    ap.add_argument("--fdr", type=float, default=0.05, help="FDR level for outlining regions > 0 (signed measure)")
     args = ap.parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)
     absolute = args.measure == "abs"
@@ -294,8 +306,11 @@ def main():
                           left=0.07, right=0.98, top=0.93, bottom=0.1)
 
     ax = fig.add_subplot(gs[0])
-    # signed measure: outline regions whose 95% t-CI over subjects excludes 0
-    marked = [] if absolute else list(shown.index[(shown["t_low"] > 0) | (shown["t_high"] < 0)])
+    # signed measure: outline regions with mean > 0 after FDR correction over the
+    # regions shown (one-sided t-test over subjects, Benjamini-Hochberg q < 0.05)
+    shown = shown.assign(q_greater=fdr_bh(shown["p_greater"]))
+    shown.to_csv(args.out_dir / f"new_vs_repeated{suffix}_region_tested.csv")
+    marked = [] if absolute else list(shown.index[shown["q_greater"] < args.fdr])
     draw_region_map(ax, geo, shown["mean"], norm, n_labels=6, cmap=cmap, regions=regions, highlight=marked)
     ax.set_title("A   Regions" + (", low-coverage parcels merged" if regions else "")
                  + " (flatmap, left hemisphere; hemispheres pooled)",
@@ -317,7 +332,7 @@ def main():
     leg.text(0.11, 0.5, f"Fewer than {args.min_subjects} subjects", fontsize=7, color=INK, va="center")
     if not absolute:
         leg.add_patch(plt.Rectangle((0, -1.6), 0.08, 1, facecolor="white", edgecolor=INK, lw=1.5, clip_on=False))
-        leg.text(0.11, -1.1, "95% t-CI excludes 0 (uncorrected)", fontsize=7, color=INK, va="center")
+        leg.text(0.11, -1.1, f"> 0, FDR q < {args.fdr:g} (one-sided)", fontsize=7, color=INK, va="center")
 
     # Bars use the map's colormap on their own symmetric scale (the map's clipped
     # scale would saturate them).
@@ -340,8 +355,8 @@ def main():
               f"SHAP summed within each merged region;\n   " if regions else "A: ") +
              f"{len(shown)} regions with ≥{args.min_subjects} subjects "
              f"({len(region) - len(shown)} with fewer shown dark gray); top 6 by |value| named; "
-             + ("" if absolute else f"\n   {len(marked)} outlined (or * in the inset): 95% t-CI over subjects excludes 0, "
-                                   f"not corrected for multiple regions; ") +
+             + ("" if absolute else f"\n   {len(marked)} outlined (or * in the inset): mean > 0, one-sided one-sample t-test over subjects, "
+                                   f"Benjamini-Hochberg FDR q < {args.fdr:g} across the {len(shown)} regions shown; ") +
              f"colour scale clipped at {'' if absolute else '±'}{vmax:.3f} (98th percentile of |value|).\n"
              f"B: per band and second; map colormap on its own scale ({'0–' if absolute else '±'}{bar_max:.3f}); bars = mean over subjects, whiskers = 95% bootstrap CI over subjects, dots = subjects.",
              fontsize=7.5, color=INK_MUTED)
