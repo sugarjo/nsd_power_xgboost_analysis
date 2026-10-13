@@ -2,7 +2,7 @@
 
 Same aggregation as plot_new_vs_repeated.py, per region x band x second: NaN
 features are left out, the signed mean-contrast SHAP value of the region's
-feature is averaged within subject (new and repeated trials weighted equally)
+feature is averaged within subject (new, recent and old weighted 1/2, 1/4, 1/4)
 and then across subjects.
 
 One flatmap per --panels entry (default: delta and alpha, each in the first and
@@ -16,6 +16,9 @@ hippocampus are drawn in the ventral glass-brain inset of each map.
 Written to --out-dir (suffix "_merged" with --merged):
   new_vs_repeated_<band><second>_....png
   new_vs_repeated_region_band_second.csv   mean, CI and number of subjects
+  new_vs_repeated_features_ranked.csv      every feature (region x band x second)
+      with >= --min-subjects subjects, ranked by the signed mean, with its
+      mean |SHAP new - repeated| and rank by that
 """
 
 import argparse
@@ -30,7 +33,7 @@ from matplotlib.colors import TwoSlopeNorm
 
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from plot_new_vs_repeated import (AXIS, DIVERGING, INK, INK_MUTED, NO_DATA_GYRUS,
+from plot_new_vs_repeated import (AXIS, BALANCE, DIVERGING, INK, INK_MUTED, NO_DATA_GYRUS,
                                   draw_region_map, load_flatmap, merge_regions, pool,
                                   subject_means)
 from signed_shap import signed_shap
@@ -107,6 +110,18 @@ def main():
     stats.index.names = lv
     stats.to_csv(args.out_dir / f"new_vs_repeated{suffix}_region_band_second.csv")
 
+    # all features ranked by the signed mean, with |new - repeated| importance next to it
+    new_vs_rep = out["new_vs_rep"]
+    if args.merged:
+        new_vs_rep = merge_regions(new_vs_rep, out["missing"], args.merged)[0]
+    abs_mean = subject_means(new_vs_rep, missing, lv, absolute=True).mean()
+    ranked = stats[stats["n_subjects"] >= args.min_subjects].copy()
+    ranked["abs_mean"] = abs_mean.reindex(ranked.index).to_numpy()
+    ranked["abs_rank"] = ranked["abs_mean"].rank(ascending=False).astype(int)
+    ranked = ranked.sort_values("mean", ascending=False)
+    ranked.insert(0, "rank", np.arange(1, len(ranked) + 1))
+    ranked.drop(columns=["p_greater"]).to_csv(args.out_dir / f"new_vs_repeated{suffix}_features_ranked.csv")
+
     shown = stats[stats["n_subjects"] >= args.min_subjects]
     values = {p: shown.xs(p, level=["band", "second"])["mean"] for p in args.panels}
     vmax = np.percentile(np.abs(np.concatenate([v.to_numpy() for v in values.values()])), 98)
@@ -119,7 +134,7 @@ def main():
         "Net signed SHAP per region (log-odds); > 0 helps the correct new/repeated call",
         args.min_subjects, "Region contributions to the new vs repeated decision",
         f"Mean-contrast SHAP of one feature per region (band x second), NaN left out; averaged within "
-        f"subject (new and repeated trials weighted equally), then across {subj.index.nunique()} subjects.\n"
+        f"subject ({BALANCE}), then across {subj.index.nunique()} subjects.\n"
         + (f"Parcels with <{args.min_subjects} subjects merged with neighbours ({args.merged.name}), SHAP summed "
            f"within each merged region. " if args.merged else "") +
         f"Regions with ≥{args.min_subjects} subjects; top 5 per panel by |value| named.\nOne colour scale for "

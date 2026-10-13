@@ -15,10 +15,11 @@ Aggregation, for each of region / band / second:
      additive, so this is the group's net contribution to the trial); for
      "abs" the absolute value of that sum is taken, so opposite pushes within
      a group cancel before the magnitude is measured.
-  3. Per subject, the trial values are averaged separately over new and over
-     repeated trials, and the two means are averaged, so both labels weigh
-     equally whatever the trial counts. Trials where the group has no present
-     feature are skipped.
+  3. Per subject, the trial values are averaged separately over new, recent
+     and old trials and combined as 1/2 new + 1/4 recent + 1/4 old, so new and
+     repeated weigh equally, and recent and old weigh equally within repeated,
+     whatever the trial counts. Trials where the group has no present feature
+     are skipped.
   4. Subjects are pooled with equal weight: the mean over subjects, with a 95%
      bootstrap confidence interval over subjects.
 
@@ -60,9 +61,11 @@ from plot_electrode_coverage import (ASEG_LABELS, NOT_SHOWN, GYRUS, INK, INK_MUT
                                      aseg_meshes, draw_flat, draw_glass_brain,
                                      fetch_fsaverage, orient_flatmap, parcel_border,
                                      read_patch)
-from signed_shap import NEW_CATEGORY, signed_shap  # noqa: E402
+from signed_shap import signed_shap  # noqa: E402
 
 BANDS = ["Delta", "Theta", "Alpha", "Beta", "GammaL", "GammaH", "Ripple"]
+LABELS = {1: "new", 2: "recent", 3: "old"}          # image_category of correct trials
+BALANCE = "new, recent and old weighted 1/2, 1/4, 1/4"
 BAND_LABELS = {"GammaL": "Low γ", "GammaH": "High γ"}
 # Diverging blue <-> red with a neutral gray midpoint.
 DIVERGING = LinearSegmentedColormap.from_list(
@@ -78,15 +81,21 @@ GRID, AXIS = "#e1e0d9", "#c3c2b7"
 
 def subject_means(signed: pd.DataFrame, missing: pd.DataFrame, level: str,
                   absolute: bool = False) -> pd.DataFrame:
-    """Subject x group table of label-balanced mean contributions (steps 1-3)."""
+    """Subject x group table of label-balanced mean contributions (steps 1-3).
+
+    Within a subject the trial values are averaged per trial type and combined
+    as 1/2 new + 1/4 recent + 1/4 old: new and repeated weigh equally, and so
+    do recent and old within repeated, whatever the trial counts. A subject
+    without trials of one type (for that group) is left out."""
     values = signed.where(~missing.to_numpy())
     per_trial = values.T.groupby(level=level).sum(min_count=1).T     # NaN if group absent
     if absolute:
         per_trial = per_trial.abs()
     idx = signed.index
-    label = np.where(idx.get_level_values("image_category") == NEW_CATEGORY, "new", "repeated")
+    label = pd.Series(idx.get_level_values("image_category")).map(LABELS).to_numpy()
     by_label = per_trial.groupby([idx.get_level_values("subject"), label]).mean()
-    return by_label.groupby(level=0).mean()
+    m = {lab: by_label.xs(lab, level=1) for lab in ("new", "recent", "old")}
+    return (m["new"] + (m["recent"] + m["old"]) / 2) / 2
 
 
 def pool(subj: pd.DataFrame, n_boot: int, seed: int = 0) -> pd.DataFrame:
@@ -368,7 +377,7 @@ def main():
             "Mean-contrast SHAP, NaN features left out; per trial summed within a region/band/second, ")
     fig.text(0.07, 0.005 - 0.022 * (bool(regions) + (not absolute)),
              what +
-             f"averaged within subject (new and repeated trials weighted equally), then across {n_subj} subjects.\n" +
+             f"averaged within subject ({BALANCE}), then across {n_subj} subjects.\n" +
              (f"A: parcels with <{args.min_subjects} subjects merged with neighbours ({args.merged.name}), "
               f"SHAP summed within each merged region;\n   " if regions else "A: ") +
              f"{len(shown)} regions with ≥{args.min_subjects} subjects "
