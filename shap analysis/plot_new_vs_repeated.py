@@ -132,27 +132,38 @@ def load_flatmap(cache: Path) -> SimpleNamespace:
                            patch_xy=orient_flatmap(patch_xy, parcel[vno]), meshes={})
 
 
-def draw_region_map(ax, geo, values: pd.Series, norm, n_labels=0, inset_labels=True, cmap=DIVERGING):
+def draw_region_map(ax, geo, values: pd.Series, norm, n_labels=0, inset_labels=True, cmap=DIVERGING,
+                    regions: dict | None = None):
     """Colour HCP-MMP1 parcels by value; regions outside the atlas go in an inset.
 
     values: region -> value, only for the regions to show (others dark gray).
+    regions: optional parcel -> merged region name; parcels of one merged
+    region share its value, and borders are drawn only between regions.
     The n_labels largest |values| on the cortex are named; a parcel split by
     the flatmap cut is named once, on its largest piece."""
     parcel, sulc, vno = geo.parcel, geo.sulc, geo.vno
-    in_atlas = values.index.isin(set(parcel))
+    if regions:
+        region_of = np.array([regions.get(p, p) if p else "" for p in parcel])
+        tri = region_of[geo.faces]
+        edge = (tri[:, 0] != tri[:, 1]) | (tri[:, 1] != tri[:, 2])
+        border = np.zeros(len(parcel), bool)
+        border[geo.faces[edge].ravel()] = True
+    else:
+        region_of, border = parcel, geo.border
+    in_atlas = values.index.isin(set(region_of))
     cortical, outside = values[in_atlas], values[~in_atlas]
 
-    vals = pd.Series(parcel).map(cortical).to_numpy(float)
+    vals = pd.Series(region_of).map(cortical).to_numpy(float)
     has = ~np.isnan(vals)
     rgb = np.where((sulc > 0)[:, None], NO_DATA_SULCUS, NO_DATA_GYRUS)
     rgb[parcel == ""] = np.where((sulc[parcel == ""] > 0)[:, None], SULCUS, GYRUS)  # medial wall
     rgb[has] = cmap(norm(vals[has]))[:, :3] * np.where(sulc[has] > 0, 0.9, 1.0)[:, None]
-    rgb[geo.border & has] = rgb[geo.border & has] * 0.6 + 0.4 * np.array(to_rgb(INK))
+    rgb[border & has] = rgb[border & has] * 0.6 + 0.4 * np.array(to_rgb(INK))
     draw_flat(ax, geo.patch_xy, geo.patch_faces, rgb[vno])
 
     placed = []
     for r in cortical.abs().nlargest(n_labels).index:
-        pts = geo.patch_xy[largest_piece(parcel[vno] == r, geo.patch_faces)]
+        pts = geo.patch_xy[largest_piece(region_of[vno] == r, geo.patch_faces)]
         xy = pts[np.argmin(((pts - pts.mean(0)) ** 2).sum(1))]   # a vertex inside the piece
         # label above the parcel, or below it when a label above would collide
         crowded = any(np.hypot(*(xy - q)) < 30 for q in placed)
@@ -227,13 +238,26 @@ def main():
     ap.add_argument("--n-boot", type=int, default=10000)
     ap.add_argument("--measure", choices=["signed", "abs"], default="signed",
                     help="signed: net push towards the correct label; abs: |new vs repeated| importance")
+    ap.add_argument("--merged", type=Path, nargs="?", const=REPO / "electrode coverages" / "figures" / "merged_regions.csv",
+                    help="parcel -> merged region table (merge_low_coverage.py); SHAP is summed within merged regions")
     args = ap.parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)
     absolute = args.measure == "abs"
-    suffix = "_abs" if absolute else ""
+    suffix = ("_abs" if absolute else "") + ("_merged" if args.merged else "")
 
     out = signed_shap(pd.read_pickle(args.pkl))
     values, missing = (out["new_vs_rep"] if absolute else out["signed"]), out["missing"]
+    regions = None
+    if args.merged:
+        # rename each parcel to its merged region; SHAP is additive, so summing a
+        # merged region's features per trial gives its contribution
+        regions = pd.read_csv(args.merged, dtype=str).set_index("parcel")["region"].to_dict()
+        cols = values.columns
+        merged_cols = pd.MultiIndex.from_arrays(
+            [[regions.get(r, r) for r in cols.get_level_values("region")],
+             cols.get_level_values("band"), cols.get_level_values("second")], names=cols.names)
+        values = values.set_axis(merged_cols, axis=1)
+        missing = missing.set_axis(merged_cols, axis=1)
     levels = {"region": "region", "band": "band", "second": "second", "band_second": ["band", "second"]}
     subj = {name: subject_means(values, missing, lvl, absolute) for name, lvl in levels.items()}
     stats = {name: pool(s, args.n_boot) for name, s in subj.items()}
@@ -256,8 +280,9 @@ def main():
                           left=0.07, right=0.98, top=0.93, bottom=0.1)
 
     ax = fig.add_subplot(gs[0])
-    draw_region_map(ax, geo, shown["mean"], norm, n_labels=6, cmap=cmap)
-    ax.set_title("A   Regions (flatmap, left hemisphere; hemispheres pooled)",
+    draw_region_map(ax, geo, shown["mean"], norm, n_labels=6, cmap=cmap, regions=regions)
+    ax.set_title("A   Regions" + (", low-coverage parcels merged" if regions else "")
+                 + " (flatmap, left hemisphere; hemispheres pooled)",
                  fontsize=10, color=INK, loc="left")
 
     cax = ax.inset_axes([0.6, -0.07, 0.28, 0.03])
@@ -289,10 +314,12 @@ def main():
     what = ("|SHAP(new) − (SHAP(recent) + SHAP(old))/2|, NaN features left out; per trial summed within a "
             "region/band/second, then made absolute, " if absolute else
             "Mean-contrast SHAP, NaN features left out; per trial summed within a region/band/second, ")
-    fig.text(0.07, 0.005,
+    fig.text(0.07, -0.02 if regions else 0.005,
              what +
-             f"averaged within subject (new and repeated trials weighted equally), then across {n_subj} subjects.\n"
-             f"A: {len(shown)} regions with ≥{args.min_subjects} subjects "
+             f"averaged within subject (new and repeated trials weighted equally), then across {n_subj} subjects.\n" +
+             (f"A: parcels with <{args.min_subjects} subjects merged with neighbours ({args.merged.name}), "
+              f"SHAP summed within each merged region;\n   " if regions else "A: ") +
+             f"{len(shown)} regions with ≥{args.min_subjects} subjects "
              f"({len(region) - len(shown)} with fewer shown dark gray); top 6 by |value| named; "
              f"colour scale clipped at {'' if absolute else '±'}{vmax:.3f} (98th percentile of |value|).\n"
              f"B: per band and second; map colormap on its own scale ({'0–' if absolute else '±'}{bar_max:.3f}); bars = mean over subjects, whiskers = 95% bootstrap CI over subjects, dots = subjects.",
