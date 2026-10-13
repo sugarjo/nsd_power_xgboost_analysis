@@ -18,7 +18,7 @@ regions outside HCP-MMP1 (amygdala, hippocampus, putamen) are left as they
 are. Greedy merging is not guaranteed to be the global minimum, but each step
 only merges where it is needed.
 
-Written to --out-dir:
+Written to --out-dir (suffix "_min<N>" when --min-subjects is not 3):
   merged_regions.csv            parcel -> merged region, with subject counts
   coverage_flatmap_merged.png   flatmap of the merged regions' coverage
 """
@@ -117,7 +117,8 @@ def main():
     rows += [dict(parcel=r, region=r, n_subjects_parcel=int(cov[r].sum()), n_subjects_region=int(cov[r].sum()),
                   n_parcels_in_region=1) for r in cov.columns if r not in set(parcel)]
     table = pd.DataFrame(rows).sort_values(["region", "parcel"])
-    table.to_csv(args.out_dir / "merged_regions.csv", index=False)
+    suffix = "" if args.min_subjects == 3 else f"_min{args.min_subjects}"
+    table.to_csv(args.out_dir / f"merged_regions{suffix}.csv", index=False)
 
     n_low_before = sum(len(s) < args.min_subjects for s in subjects.values())
     still_low = [name[g] for g in members if len(subj[g]) < args.min_subjects]
@@ -150,26 +151,40 @@ def main():
     rgb[border & has] = rgb[border & has] * 0.4 + 0.6 * np.array(to_rgb(INK)) * 0.5
 
     merged = {g for g, m in members.items() if len(m) > 1}
-    fig = plt.figure(figsize=(10, 7.6), facecolor="white")
-    ax = fig.add_axes([0.02, 0.17, 0.96, 0.75])
-    draw_flat(ax, patch_xy, patch_faces, rgb[vno])
-    for g in merged:                                       # label merged regions at their largest parcel
+    # Label each merged region at its largest parcel: by name, or, when there are
+    # too many to read, by a number listed next to the map (numbered left to right).
+    anchor = {}
+    for g in merged:
         p = max(members[g], key=lambda p: area[p])
-        xy = np.median(patch_xy[parcel[vno] == p], 0)
-        ax.annotate("+".join(members[g]), xy, fontsize=5.5, color=INK, ha="center", va="center",
+        anchor[g] = np.median(patch_xy[parcel[vno] == p], 0)
+    numbered = len(merged) > 30
+    order = sorted(merged, key=lambda g: (anchor[g][0], -anchor[g][1]))
+    fig = plt.figure(figsize=(14 if numbered else 10, 7.6), facecolor="white")
+    ax = fig.add_axes([0.02, 0.17, 0.66 if numbered else 0.96, 0.75])
+    draw_flat(ax, patch_xy, patch_faces, rgb[vno])
+    for i, g in enumerate(order, 1):
+        ax.annotate(str(i) if numbered else "+".join(members[g]), anchor[g], fontsize=6 if numbered else 5.5,
+                    color=INK, ha="center", va="center",
                     bbox=dict(boxstyle="round,pad=0.15", fc="white", ec="none", alpha=0.75))
+    if numbered:
+        key = fig.add_axes([0.69, 0.06, 0.3, 0.88])
+        key.axis("off")
+        per_col = int(np.ceil(len(order) / 2))
+        for i, g in enumerate(order):
+            key.text(0.5 * (i // per_col), 1 - (i % per_col) / per_col, f"{i + 1:>2}  " + "+".join(members[g]),
+                     fontsize=5.5, color=INK, va="top", transform=key.transAxes)
     fig.suptitle(f"Electrode coverage after merging parcels with fewer than {args.min_subjects} subjects",
                  fontsize=13, color=INK, x=0.02, ha="left")
-    add_colorbar(fig, fig.add_axes([0.35, 0.1, 0.3, 0.02]), cmap, norm, vmax)
+    add_colorbar(fig, fig.add_axes([0.25 if numbered else 0.35, 0.1, 0.3 if not numbered else 0.22, 0.02]), cmap, norm, vmax)
     fig.text(0.02, 0.0,
              f"{len(subjects)} covered parcels, {n_low_before} below {args.min_subjects} subjects; "
-             f"{len(log)} merges give {len(members)} regions ({len(merged)} of them merged, labelled). "
+             f"{len(log)} merges give {len(members)} regions ({len(merged)} of them merged, {'numbered' if numbered else 'labelled'}). "
              f"Dark lines: borders between regions after merging.\n"
              f"A merged region counts every subject with data in any of its parcels. Gray: no coverage. "
              f"Hemispheres pooled, shown on the left fsaverage hemisphere.",
              fontsize=8, color=INK_MUTED)
-    fig.savefig(args.out_dir / "coverage_flatmap_merged.png", dpi=200, bbox_inches="tight")
-    print("wrote", args.out_dir / "merged_regions.csv", "and coverage_flatmap_merged.png")
+    fig.savefig(args.out_dir / f"coverage_flatmap_merged{suffix}.png", dpi=200, bbox_inches="tight")
+    print("wrote", args.out_dir / f"merged_regions{suffix}.csv", f"and coverage_flatmap_merged{suffix}.png")
 
 
 if __name__ == "__main__":
