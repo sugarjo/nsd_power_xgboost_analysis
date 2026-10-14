@@ -84,7 +84,7 @@ def map_grid(geo, panel_values, titles, norm, cbar_label, min_subjects, title, f
     key = fig.add_axes([0.2, 0.55 * bottom, 0.25, 0.15 * bottom])
     key.set_xlim(0, 1); key.set_ylim(0, 1); key.axis("off")
     key.add_patch(plt.Rectangle((0, 0), 0.06, 1, facecolor=NO_DATA_GYRUS, edgecolor=AXIS, lw=0.5))
-    key.text(0.09, 0.5, f"Fewer than {min_subjects} subjects", fontsize=9, color=INK, va="center")
+    key.text(0.09, 0.5, f"No electrodes or fewer than {min_subjects} subjects", fontsize=9, color=INK, va="center")
 
     fig.suptitle(title, fontsize=14, color=INK, x=0.02, y=1 - 0.15 / height, ha="left", va="top")
     fig.text(0.02, -0.02 * bottom, footer, fontsize=8, color=INK_MUTED, va="top")
@@ -104,6 +104,7 @@ def main():
     ap.add_argument("--n-boot", type=int, default=10000)
     ap.add_argument("--merged", type=Path, nargs="?", const=REPO / "electrode coverages" / "figures" / "merged_regions.csv",
                     help="parcel -> merged region table (merge_low_coverage.py); SHAP is summed within merged regions")
+    ap.add_argument("--exclude", nargs="+", default=[], metavar="SUBJECT", help="subjects left out")
     args = ap.parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -111,10 +112,17 @@ def main():
     C = CONTRASTS[args.contrast]
     prefix = C["prefix"]
     out = signed_shap(pd.read_pickle(args.pkl), args.contrast)
+    if args.exclude:
+        keep = ~out["missing"].index.get_level_values("subject").isin(args.exclude)
+        covered = ~out["missing"][keep].all()       # drop features only the excluded subjects had
+        out = {k: (v[keep].loc[:, covered] if isinstance(v, pd.DataFrame) else v) for k, v in out.items()}
     values, missing, regions = out["signed"], out["missing"], None
     if args.merged:
         values, missing, regions = merge_regions(values, missing, args.merged)
     suffix = "_merged" if args.merged else ""
+    if args.merged and args.merged.stem != "merged_regions":     # e.g. merged_regions_min4_... -> _merged_min4_...
+        suffix += args.merged.stem[len("merged_regions"):]
+    suffix += "".join(f"_without_{e}" for e in args.exclude if f"_without_{e}" not in suffix)
     subj = subject_means(values, missing, lv, weights=C["weights"])
     stats = pool(subj, args.n_boot)
     stats.index.names = lv
@@ -144,8 +152,9 @@ def main():
         f"Net signed SHAP per region (log-odds); > 0 helps the correct {C['call']} call",
         args.min_subjects, f"Region contributions to the {C['title']} decision",
         f"{C['formula']} of one feature per region (band x second), NaN left out; averaged within "
-        f"subject ({C['balance']}), then across {subj.index.nunique()} subjects.\n"
-        + (f"Parcels with <{args.min_subjects} subjects merged with neighbours ({args.merged.name}), SHAP summed "
+        f"subject ({C['balance']}), then across {subj.index.nunique()} subjects"
+        + (f" (excluded: {', '.join(args.exclude)})" if args.exclude else "") + ".\n"
+        + (f"Low-coverage parcels merged with neighbours as in {args.merged.name}, SHAP summed "
            f"within each merged region. " if args.merged else "") +
         f"Regions with ≥{args.min_subjects} subjects; top {args.n_labels} per panel by |value| named.\nOne colour scale for "
         f"all panels, clipped at ±{vmax:.2g} (98th percentile of |value| over the regions shown). "
