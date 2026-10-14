@@ -1,14 +1,15 @@
 """Plot electrode (bipolar channel) coverage on fsaverage.
 
 The feature table stores one set of band-power features per HCP-MMP1 parcel
-(plus Amygdala, Hippocampus and Putamen), and a parcel is NaN for subjects
+(plus Amygdala, anterior/posterior Hippocampus and Putamen), and a parcel is NaN for subjects
 without a bipolar channel in it. Coverage is therefore defined per parcel as
 the number of subjects that have data in that parcel. Hemispheres are pooled in
 the feature names, so everything is drawn on the left hemisphere.
 
-Regions that are not in HCP-MMP1 (Amygdala, Hippocampus, Putamen) are drawn as
-meshes extracted from the fsaverage aseg segmentation, inside a faded pial
-surface. All group figures share one color scale running from 1 to the number
+Regions that are not in HCP-MMP1 (Amygdala, anterior/posterior Hippocampus) are
+drawn as meshes extracted from the fsaverage aseg segmentation, inside a faded
+pial surface. Regions in NOT_SHOWN (Putamen) are only listed in the footnotes. Anterior and posterior hippocampus are the aseg hippocampus cut at
+y = -23 mm (HIPPOCAMPUS_SPLIT_Y). All group figures share one color scale running from 1 to the number
 of subjects; the per-subject figures only show present/absent.
 
 Figures written to --out-dir:
@@ -51,7 +52,17 @@ FSAVERAGE_FILES = {
 ASEG_LABELS = {
     "Thalamus": 10, "Caudate": 11, "Putamen": 12, "Pallidum": 13,
     "Hippocampus": 17, "Amygdala": 18, "Accumbens": 26, "VentralDC": 28,
+    "Hippocampus-anterior": 17, "Hippocampus-posterior": 17,
 }
+# Regions outside HCP-MMP1 that are left out of the subcortical figures
+# (counted in the footnote only).
+NOT_SHOWN = {"Putamen"}
+# Short names for the per-subject titles.
+SHORT = {"Amygdala": "Amy", "Putamen": "Put", "Hippocampus": "HC",
+         "Hippocampus-anterior": "aHC", "Hippocampus-posterior": "pHC"}
+# The hippocampus is split into an anterior and a posterior part at this
+# y coordinate (mm; MNI y = -23, applied in fsaverage space, which is MNI305).
+HIPPOCAMPUS_SPLIT_Y = -23.0
 
 # Sequential blue ramp, light -> dark.
 BLUES = ["#b7d3f6", "#9ec5f4", "#86b6ef", "#6da7ec", "#5598e7", "#3987e5",
@@ -160,9 +171,16 @@ def aseg_meshes(aseg_path: Path, structures) -> dict:
     img = nib.load(aseg_path)
     seg = np.asarray(img.dataobj)
     tkr = img.header.get_vox2ras_tkr()
+    # y (anterior) coordinate of every voxel, for the hippocampus split
+    y = nib.affines.apply_affine(tkr, np.indices(seg.shape).reshape(3, -1).T)[:, 1].reshape(seg.shape)
     meshes = {}
     for name in structures:
-        mask = gaussian_filter((seg == ASEG_LABELS[name]).astype(float), 1.0)
+        region = seg == ASEG_LABELS[name]
+        if name.endswith("-anterior"):
+            region &= y >= HIPPOCAMPUS_SPLIT_Y
+        elif name.endswith("-posterior"):
+            region &= y < HIPPOCAMPUS_SPLIT_Y
+        mask = gaussian_filter(region.astype(float), 1.0)
         verts, faces, _, _ = marching_cubes(mask, 0.5)
         verts = nib.affines.apply_affine(tkr, verts)
         if np.linalg.det(tkr[:3, :3]) < 0:   # keep normals pointing outwards
@@ -185,7 +203,7 @@ def draw_glass_brain(ax, pial_v, faces, ghost_rgb, meshes, colors, view, labels=
         ymin, ymax = xy[:, 1].min(), xy[:, 1].max()
         y_text = ymin - 0.1 * (ymax - ymin)
         names = sorted(meshes, key=lambda n: meshes[n][0].mean(0) @ right)
-        x_text = np.linspace(*np.percentile(xy[:, 0], [8, 92]), len(names))
+        x_text = np.linspace(*np.percentile(xy[:, 0], [4, 96]), len(names))
         for name, xt in zip(names, x_text):
             c = meshes[name][0].mean(0)
             ax.annotate(labels[name], (c @ right, c @ up), xytext=(xt, y_text), ha="center", va="top",
@@ -216,7 +234,7 @@ def add_colorbar(fig, cax, cmap, norm, vmax):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--pkl", type=Path, default=REPO / "real_data_bipolar_xgboost_3w.pkl")
+    ap.add_argument("--pkl", type=Path, default=REPO / "random_data_bipolar_xgboost_3w.pkl")
     ap.add_argument("--out-dir", type=Path, default=HERE / "figures")
     ap.add_argument("--cache", type=Path, default=REPO / "data" / "fsaverage")
     args = ap.parse_args()
@@ -236,9 +254,9 @@ def main():
     cov.astype(int).to_csv(args.out_dir / "coverage_subject_by_region.csv")
     n_subj = cov.sum()
     extra = [r for r in cov.columns if r not in set(parcel)]   # not in HCP-MMP1
-    subcortical = [r for r in extra if r in ASEG_LABELS]
-    if set(extra) - set(subcortical):
-        print("regions not found in HCP-MMP1 or aseg:", sorted(set(extra) - set(subcortical)))
+    subcortical = [r for r in extra if r in ASEG_LABELS and r not in NOT_SHOWN]
+    if set(extra) - set(subcortical) - NOT_SHOWN:
+        print("regions not found in HCP-MMP1 or aseg:", sorted(set(extra) - set(subcortical) - NOT_SHOWN))
 
     # One fixed scale for every group figure: 1 .. number of subjects.
     vmax = len(cov)
@@ -248,7 +266,10 @@ def main():
     rgb = vertex_colors(values, sulc, border, cmap, norm)
 
     sub_txt = "Not in HCP-MMP1 (see coverage_subcortical.png): " + ", ".join(
-        f"{r} {int(n_subj[r])}" for r in extra)
+        f"{r} {int(n_subj[r])}" for r in subcortical)
+    hidden = [r for r in extra if r in NOT_SHOWN]
+    if hidden:
+        sub_txt += "; not shown: " + ", ".join(f"{r} {int(n_subj[r])}" for r in hidden)
     footer = (f"{len(cov)} subjects, {int((n_subj.drop(extra) > 0).sum())} of 180 "
               f"HCP-MMP1 parcels covered. Hemispheres pooled, shown on the left fsaverage hemisphere.")
 
@@ -306,10 +327,10 @@ def main():
     ghost = np.where((sulc > 0)[:, None], SULCUS, GYRUS) * 0.25 + 0.75
     absent = SULCUS
     group_colors = {r: np.array(cmap(norm(n_subj[r]))[:3]) if n_subj[r] > 0 else absent for r in subcortical}
-    labels = {r: f"{r}\n{int(n_subj[r])} subjects" for r in subcortical}
+    labels = {r: f"{r.replace('-', chr(10))}\n{int(n_subj[r])} subjects" for r in subcortical}
 
-    fig, axes = plt.subplots(1, 3, figsize=(13, 4.3), facecolor="white",
-                             gridspec_kw=dict(wspace=0.02, width_ratios=[1, 1, 1.25]))
+    fig, axes = plt.subplots(1, 3, figsize=(14, 4.3), facecolor="white",
+                             gridspec_kw=dict(wspace=0.15, width_ratios=[1, 1, 1.25]))
     for ax, view in zip(axes, VIEWS):
         draw_glass_brain(ax, pial_v, faces, ghost, meshes, group_colors, view, labels)
         ax.set_title(view, fontsize=10, color=INK)
@@ -327,14 +348,18 @@ def main():
         colors = {r: present if row[r] else absent for r in subcortical}
         draw_glass_brain(ax, pial_v, faces, ghost, meshes, colors, "Ventral")
         have = [r for r in subcortical if row[r]]
-        ax.set_title(f"{subj}: {', '.join(have) if have else 'none'}", fontsize=8, color=INK)
+        ax.set_title(f"{subj}: {', '.join(SHORT.get(r, r) for r in have) if have else 'none'}",
+                     fontsize=8, color=INK)
     for ax in axes.ravel()[len(cov):]:
         ax.axis("off")
     fig.suptitle("Regions outside HCP-MMP1 with a bipolar channel, per subject (ventral view)",
                  fontsize=13, color=INK, x=0.02, ha="left")
-    fig.text(0.02, -0.02, "Blue: present, gray: absent. Ventral view, anterior to the left: putamen is the "
-             "anterior-lateral shape, amygdala the middle one and hippocampus the long posterior one "
-             "(labelled in coverage_subcortical.png).", fontsize=8, color=INK_MUTED)
+    fig.text(0.02, -0.02, "Blue: present, gray: absent. Ventral view, anterior to the left: amygdala is the "
+             "anterior shape and hippocampus the long posterior one, "
+             f"split into an anterior and a posterior part at y = {HIPPOCAMPUS_SPLIT_Y:g} mm "
+             "(labelled in coverage_subcortical.png).\n"
+             "Titles: " + ", ".join(f"{v} = {k}" for k, v in SHORT.items() if k in subcortical) + ".",
+             fontsize=8, color=INK_MUTED)
     fig.tight_layout(rect=(0, 0, 1, 0.97))
     fig.savefig(args.out_dir / "coverage_subcortical_per_subject.png", dpi=150, bbox_inches="tight")
     plt.close(fig)
