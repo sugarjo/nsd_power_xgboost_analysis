@@ -18,7 +18,8 @@ regions outside HCP-MMP1 (amygdala, hippocampus, putamen) are left as they
 are. Greedy merging is not guaranteed to be the global minimum, but each step
 only merges where it is needed.
 
-Written to --out-dir (suffix "_min<N>" when --min-subjects is not 3):
+Written to --out-dir (suffix "_min<N>" when --min-subjects is not 3, and
+"_without_<subject>" for each --exclude subject):
   merged_regions.csv            parcel -> merged region, with subject counts
   coverage_flatmap_merged.png   flatmap of the merged regions' coverage
 """
@@ -92,6 +93,8 @@ def main():
     ap.add_argument("--out-dir", type=Path, default=HERE / "figures")
     ap.add_argument("--cache", type=Path, default=REPO / "data" / "fsaverage")
     ap.add_argument("--min-subjects", type=int, default=3)
+    ap.add_argument("--exclude", nargs="+", default=[], metavar="SUBJECT",
+                    help="subjects left out of the coverage count (case-insensitive)")
     args = ap.parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -103,6 +106,14 @@ def main():
     parcel[labels < 0] = ""
 
     cov = load_coverage(args.pkl)                          # subject x region, bool
+    if args.exclude:
+        drop = [s for s in cov.index if str(s).lower() in {e.lower() for e in args.exclude}]
+        missing = set(e.lower() for e in args.exclude) - {str(s).lower() for s in drop}
+        if missing:
+            raise SystemExit(f"--exclude: no subject {sorted(missing)}; subjects are {list(cov.index)}")
+        cov = cov.drop(drop)
+        cov = cov.loc[:, cov.any()]
+        print("excluded", drop, "->", len(cov), "subjects")
     in_atlas = [r for r in cov.columns if r in set(parcel)]
     subjects = {r: set(cov.index[cov[r]]) for r in in_atlas if cov[r].any()}
     area = pd.Series(parcel).value_counts().to_dict()     # vertices per parcel
@@ -117,7 +128,8 @@ def main():
     rows += [dict(parcel=r, region=r, n_subjects_parcel=int(cov[r].sum()), n_subjects_region=int(cov[r].sum()),
                   n_parcels_in_region=1) for r in cov.columns if r not in set(parcel)]
     table = pd.DataFrame(rows).sort_values(["region", "parcel"])
-    suffix = "" if args.min_subjects == 3 else f"_min{args.min_subjects}"
+    suffix = ("" if args.min_subjects == 3 else f"_min{args.min_subjects}") + \
+        "".join(f"_without_{e}" for e in args.exclude)
     table.to_csv(args.out_dir / f"merged_regions{suffix}.csv", index=False)
 
     n_low_before = sum(len(s) < args.min_subjects for s in subjects.values())
@@ -181,7 +193,8 @@ def main():
              f"{len(log)} merges give {len(members)} regions ({len(merged)} of them merged, {'numbered' if numbered else 'labelled'}). "
              f"Dark lines: borders between regions after merging.\n"
              f"A merged region counts every subject with data in any of its parcels. Gray: no coverage. "
-             f"Hemispheres pooled, shown on the left fsaverage hemisphere.",
+             + (f"Excluded: {', '.join(args.exclude)} ({len(cov)} subjects). " if args.exclude else "") +
+             "Hemispheres pooled, shown on the left fsaverage hemisphere.",
              fontsize=8, color=INK_MUTED)
     fig.savefig(args.out_dir / f"coverage_flatmap_merged{suffix}.png", dpi=200, bbox_inches="tight")
     print("wrote", args.out_dir / f"merged_regions{suffix}.csv", f"and coverage_flatmap_merged{suffix}.png")
