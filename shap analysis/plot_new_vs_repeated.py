@@ -322,15 +322,26 @@ def main():
                     help="parcel -> merged region table (merge_low_coverage.py); SHAP is summed within merged regions")
     ap.add_argument("--fdr", type=float, default=0.05, help="FDR level for the band x second tests (signed measure)")
     ap.add_argument("--contrast", choices=list(CONTRASTS), default="new_vs_repeated")
+    ap.add_argument("--exclude", nargs="+", default=[], metavar="SUBJECT", help="subjects left out")
     args = ap.parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)
     absolute = args.measure == "abs"
     suffix = ("_abs" if absolute else "") + ("_merged" if args.merged else "")
+    if args.merged and args.merged.stem != "merged_regions":     # e.g. merged_regions_min4_... -> _merged_min4_...
+        suffix += args.merged.stem[len("merged_regions"):]
+    suffix += "".join(f"_without_{e}" for e in args.exclude if f"_without_{e}" not in suffix)
     C = CONTRASTS[args.contrast]
     prefix = C["prefix"]
 
     out = signed_shap(pd.read_pickle(args.pkl), args.contrast)
     values, missing = (out["contrast"] if absolute else out["signed"]), out["missing"]
+    if args.exclude:
+        keep = ~values.index.get_level_values("subject").isin(args.exclude)
+        if keep.all():
+            raise SystemExit(f"--exclude: none of {args.exclude} in the data")
+        values, missing = values[keep], missing[keep]
+        covered = ~missing.all()                    # drop features only the excluded subjects had
+        values, missing = values.loc[:, covered], missing.loc[:, covered]
     regions = None
     if args.merged:
         values, missing, regions = merge_regions(values, missing, args.merged)
@@ -374,7 +385,7 @@ def main():
     leg = ax.inset_axes([0.22, -0.07, 0.25, 0.03])
     leg.set_xlim(0, 1); leg.set_ylim(0, 1); leg.axis("off")
     leg.add_patch(plt.Rectangle((0, 0), 0.08, 1, facecolor=NO_DATA_GYRUS, edgecolor=AXIS, lw=0.5))
-    leg.text(0.11, 0.5, f"Fewer than {args.min_subjects} subjects", fontsize=7, color=INK, va="center")
+    leg.text(0.11, 0.5, f"No electrodes or fewer than {args.min_subjects} subjects", fontsize=7, color=INK, va="center")
 
     # Bars use the map's colormap on their own symmetric scale (the map's clipped
     # scale would saturate them).
@@ -403,7 +414,8 @@ def main():
     fig.text(0.07, 0.005 - 0.022 * (bool(regions) + (not absolute)),
              what +
              f"averaged within subject ({C['balance']}), then across {n_subj} subjects.\n" +
-             (f"A: parcels with <{args.min_subjects} subjects merged with neighbours ({args.merged.name}), "
+             (f"Excluded: {', '.join(args.exclude)}. " if args.exclude else "") +
+             (f"A: low-coverage parcels merged with neighbours as in {args.merged.name}, "
               f"SHAP summed within each merged region;\n   " if regions else "A: ") +
              f"{len(shown)} regions with ≥{args.min_subjects} subjects "
              f"({len(region) - len(shown)} with fewer shown dark gray); top 6 by |value| named; "
