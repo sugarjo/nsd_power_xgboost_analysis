@@ -1,0 +1,153 @@
+parcel,Regions ROIs,region,n_subjects_parcel,n_subjects_region,n_parcels_in_region
+1,Primary Somatosensory Cortex,1+2,3,5,2
+2,Primary Somatosensory Cortex,1+2,3,5,2
+10v,Ventromedial prefrontal cortex,10v,3,3,1
+23c,Posterior Cingulate Cortex,23c+31pd+31a+23d,4,7,4
+23d,Posterior Cingulate Cortex,23c+31pd+31a+23d,4,7,4
+31a,Posterior Cingulate Cortex,23c+31pd+31a+23d,3,7,4
+31pd,Posterior Cingulate Cortex,23c+31pd+31a+23d,3,7,4
+24dd,Anterior cingulate cortex,24dd+5mv,2,5,2
+5mv,Anterior cingulate cortex,24dd+5mv,4,5,2
+33pr,Anterior cingulate cortex,33pr+p24pr,4,7,2
+p24pr,Anterior cingulate cortex,33pr+p24pr,4,7,2
+3a,Primary Somatosensory Cortex,3b+3a,6,7,2
+3b,Primary Somatosensory Cortex,3b+3a,4,7,2
+4,Primary Motor Cortex,4,6,6,1
+43,Anterior Opercular Cortex,43+FOP3+FOP1+FOP2,3,5,4
+FOP1,Anterior Opercular Cortex,43+FOP3+FOP1+FOP2,1,5,4
+FOP2,Anterior Opercular Cortex,43+FOP3+FOP1+FOP2,4,5,4
+FOP3,Anterior Opercular Cortex,43+FOP3+FOP1+FOP2,3,5,4
+44,Inferior Frontal Cortex,44+IFSp,3,6,2
+IFSp,Inferior Frontal Cortex,44+IFSp,5,6,2
+45,Inferior Frontal Cortex,45+IFSa,2,5,2
+IFSa,Inferior Frontal Cortex,45+IFSa,4,5,2
+13l,Orbitofrontal Cortex,47m+13l,5,6,2
+47m,Orbitofrontal Cortex,47m+13l,4,6,2
+47l,Ventrolateral prefrontal cortex,47s+47l+p47r+a47r,2,6,4
+47s,Ventrolateral prefrontal cortex,47s+47l+p47r+a47r,1,6,4
+a47r,Ventrolateral prefrontal cortex,47s+47l+p47r+a47r,3,6,4
+p47r,Ventrolateral prefrontal cortex,47s+47l+p47r+a47r,3,6,4
+55b,Premotor Cortex,55b+PEF,2,5,2
+PEF,Premotor Cortex,55b+PEF,4,5,2
+6d,Premotor Cortex,6mp+FEF+6d,4,6,3
+6mp,Premotor Cortex,6mp+FEF+6d,3,6,3
+FEF,Premotor Cortex,6mp+FEF+6d,3,6,3
+6r,Premotor Cortex,6v+6r,5,6,2
+6v,Premotor Cortex,6v+6r,2,6,2
+7AL,Superior Parietal Cortex,7AL+AIP,1,5,2
+AIP,Superior Parietal Cortex,7AL+AIP,4,5,2
+46,Dorsolateral prefrontal cortex,9-46d+8Ad+46,5,6,3
+8Ad,Dorsolateral prefrontal cortex,9-46d+8Ad+46,1,6,3
+9-46d,Dorsolateral prefrontal cortex,9-46d+8Ad+46,1,6,3
+A1,Auditory Cortical Complex,A1+RI,2,5,2
+RI,Auditory Cortical Complex,A1+RI,4,5,2
+A5,Auditory Cortical Complex,A5,9,9,1
+AAIC,Anterior Insula,AVI+Pir+AAIC,3,7,3
+AVI,Anterior Insula,AVI+Pir+AAIC,3,7,3
+Pir,Anterior Insula,AVI+Pir+AAIC,2,7,3
+Amygdala,Amygdala,Amygdala,10,10,1
+EC,Entorhinal Complex,EC+PreS,4,6,2
+PreS,Entorhinal Complex,EC+PreS,6,6,2
+FOP4,Anterior Opercular Cortex,FOP5+FOP4,7,7,2
+FOP5,Anterior Opercular Cortex,FOP5+FOP4,4,7,2
+FST,Superior Temporal Cortex,FST,5,5,1
+Hippocampus-anterior,Hippocampus,Hippocampus-anterior,12,12,1
+Hippocampus-posterior,Hippocampus,Hippocampus-posterior,11,11,1
+IFJa,Inferior Frontal Cortex,IFJp+IFJa,4,5,2
+IFJp,Inferior Frontal Cortex,IFJp+IFJa,1,5,2
+IP0,Inferior Parietal Cortex,IP2+IP0+IP1,1,4,3
+IP1,Inferior Parietal Cortex,IP2+IP0+IP1,2,4,3
+IP2,Inferior Parietal Cortex,IP2+IP0+IP1,2,4,3
+IPS1,Late Visual Cortex,IPS1+LO1+LO3+V3CD+V7+V6,1,4,6
+LO1,Late Visual Cortex,IPS1+LO1+LO3+V3CD+V7+V6,1,4,6
+LO3,Late Visual Cortex,IPS1+LO1+LO3+V3CD+V7+V6,1,4,6
+V3CD,Late Visual Cortex,IPS1+LO1+LO3+V3CD+V7+V6,1,4,6
+V6,Late Visual Cortex,IPS1+LO1+LO3+V3CD+V7+V6,3,4,6
+V7,Late Visual Cortex,IPS1+LO1+LO3+V3CD+V7+V6,1,4,6
+Ig,Posterior Insula,Ig+PoI1,4,9,2
+PoI1,Posterior Insula,Ig+PoI1,9,9,2
+LBelt,Auditory Cortical Complex,LBelt,6,6,1
+7PC,Superior Parietal Cortex,LIPd+7PC+MIP,1,5,3
+LIPd,Superior Parietal Cortex,LIPd+7PC+MIP,2,5,3
+MIP,Superior Parietal Cortex,LIPd+7PC+MIP,3,5,3
+MBelt,Auditory Cortical Complex,MBelt,7,7,1
+MI,Anterior Insula,MI,8,8,1
+MST,MT Area,MST+MT,1,2,2
+MT,MT Area,MST+MT,2,2,2
+11l,Orbitofrontal Cortex,OFC+11l,4,5,2
+OFC,Orbitofrontal Cortex,OFC+11l,2,5,2
+OP1,Posterior Opercular Cortex,OP2-3+OP4+OP1,5,5,3
+OP2-3,Posterior Opercular Cortex,OP2-3+OP4+OP1,2,5,3
+OP4,Posterior Opercular Cortex,OP2-3+OP4+OP1,1,5,3
+A4,Auditory Cortical Complex,PBelt+A4,3,6,2
+PBelt,Auditory Cortical Complex,PBelt+A4,3,6,2
+7m,Precuneus,PCV+7m,5,6,2
+PCV,Precuneus,PCV+7m,3,6,2
+PF,Angular gyrus,PFm+PSL+PF,5,8,3
+PFm,Angular gyrus,PFm+PSL+PF,3,8,3
+PSL,Angular gyrus,PFm+PSL+PF,1,8,3
+PFcm,Supramarginal gyrus,PFt+PFcm+PFop,3,5,3
+PFop,Supramarginal gyrus,PFt+PFcm+PFop,4,5,3
+PFt,Supramarginal gyrus,PFt+PFcm+PFop,4,5,3
+PGi,Posterior Parietal Group,PGp+PGs+PGi,5,5,3
+PGp,Posterior Parietal Group,PGp+PGs+PGi,2,5,3
+PGs,Posterior Parietal Group,PGp+PGs+PGi,4,5,3
+PH,Temporal Area 2,PH+TE2p,4,10,2
+TE2p,Temporal Area 2,PH+TE2p,8,10,2
+PHA1,Para_Hippocampal Gyrus,PHA2+PHA1,5,6,2
+PHA2,Para_Hippocampal Gyrus,PHA2+PHA1,2,6,2
+PHA3,Para_Hippocampal Gyrus,PHA3,6,6,1
+PHT,Temporal Area 1,PHT,5,5,1
+52,Parainsular Cortex,PI+52,4,6,2
+PI,Parainsular Cortex,PI+52,3,6,2
+POS1,Parieto_Occipital Sulcus,POS1+POS2,3,5,2
+POS2,Parieto_Occipital Sulcus,POS1+POS2,4,5,2
+PeEc,Entorhinal Complex,PeEc,6,6,1
+PoI2,Posterior Insula,PoI2,6,6,1
+Putamen,,Putamen,2,2,1
+RSC,Posterior Cingulate Cortex,RSC,8,8,1
+6a,Premotor Cortex,SCEF+6ma+6a,5,5,3
+6ma,Premotor Cortex,SCEF+6ma+6a,1,5,3
+SCEF,Premotor Cortex,SCEF+6ma+6a,1,5,3
+STSda,Superior Temporal Cortex,STSda,5,5,1
+STSdp,Superior Temporal Cortex,STSdp,7,7,1
+STSva,Superior Temporal Cortex,STSva,11,11,1
+STSvp,Superior Temporal Cortex,STSvp,6,6,1
+STV,Temporo_Parieto_Occipital Junction,STV+TPOJ1,3,5,2
+TPOJ1,Temporo_Parieto_Occipital Junction,STV+TPOJ1,4,5,2
+STGa,Superior Temporal Cortex,TA2+STGa,4,7,2
+TA2,Superior Temporal Cortex,TA2+STGa,3,7,2
+TE1a,Temporal Area 1,TE1a,10,10,1
+TE1m,Temporal Area 1,TE1m,7,7,1
+TE1p,Temporal Area 1,TE1p,10,10,1
+TE2a,Temporal Area 2,TE2a,9,9,1
+TF,Para_Hippocampal Gyrus,TF,7,7,1
+TGd,Temporal Pole,TGv+TGd,9,10,2
+TGv,Temporal Pole,TGv+TGd,3,10,2
+TPOJ2,Temporo_Parieto_Occipital Junction,TPOJ3+TPOJ2,6,6,2
+TPOJ3,Temporo_Parieto_Occipital Junction,TPOJ3+TPOJ2,1,6,2
+V1,Early Visual Cortex,V1,5,5,1
+V2,Early Visual Cortex,V3A+V4+V3+V2,5,5,4
+V3,Early Visual Cortex,V3A+V4+V3+V2,1,5,4
+V3A,Early Visual Cortex,V3A+V4+V3+V2,1,5,4
+V4,Early Visual Cortex,V3A+V4+V3+V2,1,5,4
+FFC,IT Cortex,VMV1+FFC+VMV2+VMV3+VVC,1,5,5
+VMV1,IT Cortex,VMV1+FFC+VMV2+VMV3+VVC,2,5,5
+VMV2,IT Cortex,VMV1+FFC+VMV2+VMV3+VVC,1,5,5
+VMV3,IT Cortex,VMV1+FFC+VMV2+VMV3+VVC,1,5,5
+VVC,IT Cortex,VMV1+FFC+VMV2+VMV3+VVC,3,5,5
+31pv,Posterior Cingulate Cortex,d23ab+31pv+v23ab,1,5,3
+d23ab,Posterior Cingulate Cortex,d23ab+31pv+v23ab,3,5,3
+v23ab,Posterior Cingulate Cortex,d23ab+31pv+v23ab,3,5,3
+d32,Medial Frontal Cortex,p32+d32,1,2,2
+p32,Medial Frontal Cortex,p32+d32,1,2,2
+24dv,Anterior cingulate cortex,p32pr+24dv+a32pr+a24pr+p24,2,7,5
+a24pr,Anterior cingulate cortex,p32pr+24dv+a32pr+a24pr+p24,2,7,5
+a32pr,Anterior cingulate cortex,p32pr+24dv+a32pr+a24pr+p24,2,7,5
+p24,Anterior cingulate cortex,p32pr+24dv+a32pr+a24pr+p24,3,7,5
+p32pr,Anterior cingulate cortex,p32pr+24dv+a32pr+a24pr+p24,2,7,5
+8Av,Dorsolateral prefrontal cortex,p9-46v+8Av+8C,2,6,3
+8C,Dorsolateral prefrontal cortex,p9-46v+8Av+8C,4,6,3
+p9-46v,Dorsolateral prefrontal cortex,p9-46v+8Av+8C,3,6,3
+a24,Anterior cingulate cortex,s32+a24,4,5,2
+s32,Anterior cingulate cortex,s32+a24,1,5,2
