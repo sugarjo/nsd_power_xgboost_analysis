@@ -8,7 +8,9 @@ import pickle
 import re
 from pathlib import Path
 
+from neural_decoding.utils import get_ephys_meta
 from neural_decoding.utils import load_db
+
 import os
 import glob
 from scipy.stats import norm
@@ -44,26 +46,31 @@ def load_data(input_dir, field, button_limit, trial_dir=""):
                 bipolar_pre_trial_ephys = []
 
                 #loop the channels
-                for c_ind, c in enumerate(original_trials.iloc[t].channels[:-1]):
-                    #assume they are in order
-                    next_channel = original_trials.iloc[t].channels[c_ind+1]
-                    probe1 = re.sub(r"[\d]", "", c)
-                    probe2 = re.sub(r"[\d]", "", next_channel)
+                for c_ind, c in enumerate(original_trials.iloc[t].channels):
+                    
+                    current_channel = get_ephys_meta.standardized_channel_name(c)              
+                    probe1, el1 = get_ephys_meta.get_probe_channel(current_channel)
 
-                    el1 = int(re.sub(r"[^\d]", "", c))
-                    el2 = int(re.sub(r"[^\d]", "", next_channel))
+                    #loop to find the neighbour
+                    matched = 0
+                    for c_ind2, c2 in enumerate(original_trials.iloc[t].channels):
+                        next_channel = get_ephys_meta.standardized_channel_name(c2)              
+                        probe2, el2 = get_ephys_meta.get_probe_channel(current_channel)
 
-                    if probe1==probe2 and el1+1 == el2:
-                        bi_ephys = original_trials.iloc[t].ephys[:, c_ind] - original_trials.iloc[t].ephys[:, c_ind+1]                        
-                        #bi_pre_trial_ephys = original_trials.iloc[t].pre_trial_ephys[:, c_ind] - original_trials.iloc[t].pre_trial_ephys[:, c_ind+1]    
-                        bi_channel = original_trials.iloc[t].channels[c_ind] + " - " +  original_trials.iloc[t].channels[c_ind+1]    
+                        if probe1==probe2 and el1+1 == el2:
 
-                        bipolar_channels.append(bi_channel)
-                        bipolar_ephys.append(bi_ephys)
-                        #bipolar_pre_trial_ephys.append(bi_pre_trial_ephys)
+                            matched += 1
+                            bi_ephys = original_trials.iloc[t].ephys[:, c_ind] - original_trials.iloc[t].ephys[:, c_ind+1]                        
+                            #bi_pre_trial_ephys = original_trials.iloc[t].pre_trial_ephys[:, c_ind] - original_trials.iloc[t].pre_trial_ephys[:, c_ind+1]    
+                            bi_channel = original_trials.iloc[t].channels[c_ind] + " - " +  original_trials.iloc[t].channels[c_ind+1]    
+
+                            bipolar_channels.append(bi_channel)
+                            bipolar_ephys.append(bi_ephys)
+                            #bipolar_pre_trial_ephys.append(bi_pre_trial_ephys)
+                    
                     else:
                         if t==0:
-                            print('Skip', original_trials.iloc[t].channels[c_ind], original_trials.iloc[t].channels[c_ind+1])
+                            print('Skip', c_ind, original_trials.iloc[t].channels[c_ind], original_trials.iloc[t].channels[c_ind+1])
 
                 original_trials.at[original_trials.index[t], "bipolar_ephys"] = np.ma.vstack(bipolar_ephys).T.copy()
                 #original_trials.at[original_trials.index[t], "bipolar_pre_trial_ephys"] = np.ma.vstack(bipolar_pre_trial_ephys)
@@ -77,11 +84,27 @@ def load_data(input_dir, field, button_limit, trial_dir=""):
             #trials = trials.rename(columns={"bipolar_pre_trial_ephys": "pre_trial_ephys"})
             trials = trials.rename(columns={"bipolar_channels": "channels"})
 
-            trials['repetition_num'] = trials.groupby('image_ID').cumcount()
-        
-            #check if baseline_corrected. if not calculate ffts and baseline correct! each fft has the shape of sec, freq, channels
-            if not field in trials.columns:    
-                fft_trials = feature_setup.baseline_correct(trials, field, input_dir)
+        trials = trials.sort_values(by='clock_time')
+        trials['repetition_num'] = trials.groupby('image_ID').cumcount()
+
+        #get time since last presentation
+        last_pres = []
+        for t in range(len(trials)):
+            i_id = trials.iloc[t].image_ID
+            ind = np.where(trials.iloc[:t].image_ID == i_id)[0]
+
+            if len(ind) == 0:
+                last_pres.append(0)
+            else:
+                last_pres.append(trials.iloc[t].clock_time - trials.iloc[ind[-1]].clock_time)
+
+
+
+        trials['time_since_last_presentation'] = last_pres
+    
+        #check if baseline_corrected. if not calculate ffts and baseline correct! each fft has the shape of sec, freq, channels
+        if not field in trials.columns:    
+            fft_trials = feature_setup.baseline_correct(trials, field, input_dir)
     
     fft_trials = fft_trials.sort_values(by='clock_time')
 
@@ -123,6 +146,7 @@ def load_data(input_dir, field, button_limit, trial_dir=""):
     presentation_time = relevant_trials.clock_time.values
     responses = relevant_trials.last_response.values 
     repetitions = relevant_trials.repetition_num.values 
+    time_last_presentation = relevant_trials.time_since_last_presentation
 
     dataset_shape = [relevant_trials.shape[0], len(channels)]
     dataset_shape.extend(trial_shape)
@@ -158,7 +182,7 @@ def load_data(input_dir, field, button_limit, trial_dir=""):
                 
             #else:
                 #raise ValueError("Shape of individual trials is neither 2D or 3D")
-    return data, fft_freq, channels, [pic, presentation_time, responses, repetitions]
+    return data, fft_freq, channels, [pic, presentation_time, responses, repetitions, time_last_presentation]
 
 
 def morlet_convolve(fs, cycles, f0, signal):

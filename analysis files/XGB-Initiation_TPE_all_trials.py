@@ -142,15 +142,18 @@ def shuffle_models(ind, shift):
     y_copy = image_category.copy()
     shuffled_y = np.roll(y_copy, shift, axis=0)
 
-    shuffled_y = np.array(shuffled_y).astype(int)
+    #shuffled_y = np.array(shuffled_y).astype(int)
+    shuffled_y = roll_within_subject(image_category, shift).astype(int)
 
     # roll the y labels by a random number
     stratify_copy = stratify_sessions.copy()
-    shuffled_stratify = np.roll(stratify_copy, shift, axis=0)
+    #shuffled_stratify = np.roll(stratify_copy, shift, axis=0)
+    shuffled_stratify = roll_within_subject(stratify_sessions, shift)
 
     subject_categories_copy = subject_categories.copy()
-    shuffled_subject_categories = np.roll(
-        subject_categories_copy, shift, axis=0)
+    # shuffled_subject_categories = np.roll(
+    #     subject_categories_copy, shift, axis=0)
+    shuffled_subject_categories = roll_within_subject(subject_categories, shift)
 
     s_train_X, s_test_X, s_train_y, s_test_y, s_train_subject_categories, s_test_subject_categories = train_test_split(
         correct_df, shuffled_y, shuffled_subject_categories, stratify=shuffled_stratify, test_size=test_size, random_state=ind)
@@ -232,6 +235,15 @@ def compress_shaps(shaps, x_data, y_labels):
 
     return compressed_shaps
 
+def roll_within_subject(values, shift):
+    #Roll values by `shift` positions, separately within each subject.
+    values = np.asarray(values)
+    rolled = values.copy()
+    for s in np.unique(trial_subjects):
+        idx = np.flatnonzero(trial_subjects == s)
+        rolled[idx] = np.roll(values[idx], shift % len(idx))
+    return rolled
+
 
 xgb_models = []
 test_accuracies = []
@@ -306,8 +318,9 @@ else:
 
         # 'ephys' (extract raw ffts from timeseries) or 'session_corrected_fft', 'block_corrected_fft'. Run bas_corr_fft to store the corrected ffts before running this script
         extract_field = 'session_corrected_fft'
+
     
-        data, fft_freq, channels, [pic, presentation_time, responses, repetitions] = read_data.load_data(
+        data, fft_freq, channels, [pic, presentation_time, responses, repetitions, time_last_presentation] = read_data.load_data(
             input_dir, extract_field, button_limit, trial_dir)
 
         print(str(int(np.shape(data)[0])) + ' trials')
@@ -316,7 +329,7 @@ else:
         print(str(((data.size - np.sum(np.isfinite(data))) +
               np.sum(data == 0))/data.size) + ' zeros, inf or nans in FFTs')
     
-        yreal = feature_setup.data_labelling(pic, presentation_time, responses)
+        yreal = feature_setup.data_labelling(pic, presentation_time, responses, time_last_presentation)
         for c in range(1, 4):
             selected = yreal[:, 0] == c
             behaviour[0, c-1] += sum(selected)
@@ -886,10 +899,16 @@ print('')
 
 print('Shuffle!')
 
+shuffled_accuracies = []
+shuffled_confusion_matrices = []
+
 #first check how many iterations have been done
 done_iterations = 0
 done_batches = 0
 exists = True
+
+shuffles_per_batch = 8
+
 while exists:
     batch_name = f'batch_{done_batches}_shuffle_shap_'
     
@@ -900,21 +919,26 @@ while exists:
     if file_path.exists():
         print('Batch', done_batches, 'exists')
         done_batches += 1
-        
+
         with open(file_path, 'rb') as f:
             batch = pickle.load(f)
-            for k in batch:
-                done_iterations += 1    
+            for k in batch['permutated_confusion_mat']:
+                shuffled_confusion_matrices.append(k)
+                
+        done_iterations += shuffles_per_batch
+
     else:
         exists = False
             
 
 #keep on from where it was left
-n = train_X.shape[0]
+#used to roll.
+trial_subjects = correct_df.index.get_level_values('subject').to_numpy()
+n = int(pd.Series(trial_subjects).value_counts().min())   # smallest patient
+#n = train_X.shape[0]
 
 random_shifts = []
 
-shuffles_per_batch = 8
 num_batches = int(np.ceil((random_shuffles-done_iterations)/shuffles_per_batch))
 num_shuffles = num_batches * shuffles_per_batch + done_iterations
 
@@ -929,9 +953,6 @@ random_shifts = random_shifts + \
     list(range(1, int(np.ceil((n_missing_values/2)+1))))
 random_shifts = random_shifts + \
     list(range(n - int(np.ceil((n_missing_values/2))), n))
-
-shuffled_accuracies = []
-shuffled_confusion_matrices = []
 
 
 for curr_batch in range(num_batches):
@@ -957,6 +978,8 @@ for curr_batch in range(num_batches):
 
         print('Shuffle batch', batch, iteration_start,
               iteration_end)
+
+
 
         parallel_results = Parallel(n_jobs=shuffles_per_batch)(
             delayed(shuffle_models)(ind, random_shifts[ind]) for ind in shift_ind)
