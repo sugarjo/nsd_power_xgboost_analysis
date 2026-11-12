@@ -617,7 +617,8 @@ def baseline_correct(trial_file, correction_type, input_dir):
     fft_t1 = []
     fft_t2 = []
     fs = int(trial_file.iloc[0].sample_rate)
-    window = signal.windows.hamming(int(fs*1.5))# + 256)
+    # taper over exactly the 1-s segment that is analysed
+    window = signal.windows.hamming(fs)
 
     feature_fft = [None] * len(trial_file)
 
@@ -642,19 +643,19 @@ def baseline_correct(trial_file, correction_type, input_dir):
             #loop all channels
             # broadband filter + FFT calculation 
             for channel in range(np.shape(trial)[1]):
-                #3 consequtive seconds with 0.5 sec overlap
-                windowed1 = trial[:int(fs*1.5), channel] * window
-                windowed2 = trial[fs:int(fs*2.5), channel] * window
-                windowed3 = trial[fs*2:int(fs*3.5), channel] * window
+                #3 consecutive, non-overlapping seconds
+                windowed1 = trial[:fs, channel] * window
+                windowed2 = trial[fs:fs*2, channel] * window
+                windowed3 = trial[fs*2:fs*3, channel] * window
 
 
                 # tmp1 = fft_analysis(windowed1[128:-128], 254, fs, 254)[1][0]
                 # tmp2 = fft_analysis(windowed2[128:-128], 254, fs, 254)[1][0]
                 # tmp3 = fft_analysis(windowed3[128:-128], 254, fs, 254)[1][0]
 
-                tmp1 = fft_analysis(windowed1[:int(-fs*0.5)], 254, fs, 254)[1][0]
-                tmp2 = fft_analysis(windowed2[:int(-fs*0.5)], 254, fs, 254)[1][0]
-                tmp3 = fft_analysis(windowed3[:int(-fs*0.5)], 254, fs, 254)[1][0]
+                tmp1 = fft_analysis(windowed1, 254, fs, 254)[1][0]
+                tmp2 = fft_analysis(windowed2, 254, fs, 254)[1][0]
+                tmp3 = fft_analysis(windowed3, 254, fs, 254)[1][0]
 
                 fft_baseline_trial.append([tmp1, tmp2, tmp3])
             fft_baseline.append(fft_baseline_trial)
@@ -672,15 +673,15 @@ def baseline_correct(trial_file, correction_type, input_dir):
             #loop all channels
             for channel in range(np.shape(trial)[1]):
 
-                windowed1 = trial[:int(fs*1.5),channel] * window
-                windowed2 = trial[fs:int(fs*2.5),channel] * window
+                windowed1 = trial[:fs,channel] * window
+                windowed2 = trial[fs:fs*2,channel] * window
                 
                 #correct?
                 
                 # tmp1 = fft_analysis(windowed1[128:-128], 254, fs, 254)[1][0]
                 # tmp2 = fft_analysis(windowed2[128:-128], 254, fs, 254)[1][0]
-                tmp1 = fft_analysis(windowed1[:int(-fs*0.5)], 254, fs, 254)[1][0]
-                tmp2 = fft_analysis(windowed2[:int(-fs*0.5)], 254, fs, 254)[1][0]
+                tmp1 = fft_analysis(windowed1, 254, fs, 254)[1][0]
+                tmp2 = fft_analysis(windowed2, 254, fs, 254)[1][0]
 
                 tmp_1.append(tmp1)
                 tmp_2.append(tmp2)
