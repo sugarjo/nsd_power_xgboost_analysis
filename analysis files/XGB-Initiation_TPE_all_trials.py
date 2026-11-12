@@ -26,8 +26,9 @@ from neural_decoding.utils import get_ephys_meta
 from matplotlib import pyplot as plt
 
 
+
 # CNP04 should be first to set up the image structure- #CNP11 not included because of previous surgery. CNP13 excluded because of few old trials. CNP21 has a lot of premature button presses
-subjects = ['CNP04', 'CNP05', 'CNP08', 'CNP09', 'CNP10', 'CNP12',
+subjects = ['CNP21', 'CNP04', 'CNP05', 'CNP08', 'CNP09', 'CNP10', 'CNP12',
             'CNP14', 'CNP18', 'CNP19', 'CNP20', 'CNP22', 'CNP26', 'CNP27', 'CNP28', 'CNP29']
 
 # bands = ['Delta1', 'Delta2',
@@ -67,6 +68,9 @@ train_accuracies = []
 num_features = []
 
 cpu_count = multiprocessing.cpu_count()
+
+
+
 
 
 def objective(space):
@@ -254,6 +258,19 @@ overall_data = []
 # overall_gm_feature_weights = []
 
 hypatia_path = os.environ["CNP_HYPATIA"]
+
+
+# import sys
+# from datetime import datetime
+# created_at = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+
+# log_file_name = os.path.join(hypatia_path, "nsd", "logfiles", f"{created_at}.txt")
+
+# log_file = open(log_file_name, "a", buffering=1)
+# sys.stdout = log_file
+# sys.stderr = log_file
+
+
 
 savedir = os.path.join(hypatia_path, "nsd", "overall_RF", "all_trials")
 
@@ -1125,3 +1142,5 @@ while not saved:
         saved = True
     except:
         print('Error: not saved')
+
+log.close()

@@ -36,7 +36,7 @@ def load_data(input_dir, field, button_limit, trial_dir=""):
         #calculate the bipolar
         if "bipolar" in Path(input_dir).parts[-1]:
             original_trials["bipolar_ephys"] = [[] for _ in range(len(original_trials))]
-            #original_trials["bipolar_pre_trial_ephys"] = [[] for _ in range(len(original_trials))]
+            original_trials["bipolar_pre_trial_ephys"] = [[] for _ in range(len(original_trials))]
             original_trials["bipolar_channels"] = [[] for _ in range(len(original_trials))]
 
             for t in range(len(original_trials)):
@@ -55,33 +55,37 @@ def load_data(input_dir, field, button_limit, trial_dir=""):
                     matched = 0
                     for c_ind2, c2 in enumerate(original_trials.iloc[t].channels):
                         next_channel = get_ephys_meta.standardized_channel_name(c2)              
-                        probe2, el2 = get_ephys_meta.get_probe_channel(current_channel)
+                        probe2, el2 = get_ephys_meta.get_probe_channel(next_channel)
 
                         if probe1==probe2 and el1+1 == el2:
 
                             matched += 1
-                            bi_ephys = original_trials.iloc[t].ephys[:, c_ind] - original_trials.iloc[t].ephys[:, c_ind+1]                        
-                            #bi_pre_trial_ephys = original_trials.iloc[t].pre_trial_ephys[:, c_ind] - original_trials.iloc[t].pre_trial_ephys[:, c_ind+1]    
-                            bi_channel = original_trials.iloc[t].channels[c_ind] + " - " +  original_trials.iloc[t].channels[c_ind+1]    
+                            bi_ephys = original_trials.iloc[t].ephys[:, c_ind] - original_trials.iloc[t].ephys[:, c_ind2]                        
+                            bi_pre_trial_ephys = original_trials.iloc[t].pre_trial_ephys[:, c_ind] - original_trials.iloc[t].pre_trial_ephys[:, c_ind2]    
+                            bi_channel = original_trials.iloc[t].channels[c_ind] + " - " +  original_trials.iloc[t].channels[c_ind2]    
 
                             bipolar_channels.append(bi_channel)
                             bipolar_ephys.append(bi_ephys)
-                            #bipolar_pre_trial_ephys.append(bi_pre_trial_ephys)
+                            bipolar_pre_trial_ephys.append(bi_pre_trial_ephys)
                     
-                    else:
-                        if t==0:
-                            print('Skip', c_ind, original_trials.iloc[t].channels[c_ind], original_trials.iloc[t].channels[c_ind+1])
+                    #to avoid of printing for each trial
+                    if t == 0:
+                        if matched == 0:
+                            print(c_ind, 'Did not fint bipolar', original_trials.iloc[t].channels[c_ind])
+                        if matched > 1:
+                            print(c_ind, 'Matched', matched, 'times', original_trials.iloc[t].channels[c_ind])
+                   
 
                 original_trials.at[original_trials.index[t], "bipolar_ephys"] = np.ma.vstack(bipolar_ephys).T.copy()
-                #original_trials.at[original_trials.index[t], "bipolar_pre_trial_ephys"] = np.ma.vstack(bipolar_pre_trial_ephys)
+                original_trials.at[original_trials.index[t], "bipolar_pre_trial_ephys"] = np.ma.vstack(bipolar_pre_trial_ephys).T.copy()
                 original_trials.at[original_trials.index[t], "bipolar_channels"] = bipolar_channels.copy()
 
 
             trials = original_trials[['image_ID', 'clock_time', 'sample_rate', 'last_response',
-                'last_motor_response', 'indices_all_responses', 'bipolar_ephys', 'bipolar_channels']]
+                'last_motor_response', 'indices_all_responses', 'bipolar_ephys', 'bipolar_channels', "bipolar_pre_trial_ephys"]]
 
             trials = trials.rename(columns={"bipolar_ephys": "ephys"})
-            #trials = trials.rename(columns={"bipolar_pre_trial_ephys": "pre_trial_ephys"})
+            trials = trials.rename(columns={"bipolar_pre_trial_ephys": "pre_trial_ephys"})
             trials = trials.rename(columns={"bipolar_channels": "channels"})
 
         trials = trials.sort_values(by='clock_time')
