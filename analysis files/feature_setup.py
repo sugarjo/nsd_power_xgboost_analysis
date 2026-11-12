@@ -41,7 +41,7 @@ def load_data(
     return outfile
 
 
-def data_labelling(pic, presentation_time, responses):
+def data_labelling(pic, presentation_time, responses, time_last_presentation):
     
     last_trial_time = 0
     curr_group = 0
@@ -53,14 +53,11 @@ def data_labelling(pic, presentation_time, responses):
                 label = 100 # baseline, accidental button press
             elif (responses[i] == 'mock'):
                 label = 101 # baseline, no motor response
-        #old image
-        elif(np.any(np.isin(pic[:i] , pic[i]))):
-            #time since last presentation (-1) or first presentation (0)
-            first_presented = np.where(pic[:i] == pic[i])[0][0]
-            last_presented = np.where(pic[:i] == pic[i])[0][-1]
+        #seen before
+        elif time_last_presentation[i] > 0:
 
             #more than 3 hour since shown?
-            if presentation_time[i] - presentation_time[last_presented] > 60*60*3:         
+            if time_last_presentation[i] > 60*60*3:         
                 label = 3 #old
             else:
                 label = 2 #recently shown            
@@ -85,7 +82,8 @@ def data_labelling(pic, presentation_time, responses):
                 label = 4 #unanswered
             else:
                 label = 404
-                    
+
+        #switch recording session      
         if presentation_time[i] - last_trial_time > 60*60*3:
             curr_group += 10
         
@@ -542,8 +540,8 @@ def trial_removal(xdata, yreal, wm_xdata, criterion):
     wm_xdata = np.reshape(wm_xdata , (wm_xdata.shape[0] , 7*wm_xdata.shape[1]*wm_xdata.shape[2]))
 
     #mean/std for each feature (across trials)
-    mean = np.mean(xdata, axis=0)
-    std = np.std(xdata, axis=0)
+    mean = np.nanmean(xdata, axis=0)
+    std = np.nanstd(xdata, axis=0)
     zs = (xdata - mean) / std
     #initiate
     # meanzs = np.zeros((xdata.shape[0] , int(xdata.shape[1])))
@@ -556,7 +554,7 @@ def trial_removal(xdata, yreal, wm_xdata, criterion):
     badts = []
     #loop the trials. if any of the features is above the criterion sd. remove it.
     for i in range (xdata.shape[0]):
-        if (np.any(zs[i,:]>criterion)):
+        if (np.any(np.abs(zs[i,:])>criterion)):
             badts.append(i)
             
     noicy_trials = np.zeros(xdata.shape[0], dtype=bool)
@@ -617,7 +615,8 @@ def baseline_correct(trial_file, correction_type, input_dir):
     fft_t1 = []
     fft_t2 = []
     fs = int(trial_file.iloc[0].sample_rate)
-    window = signal.windows.hamming(int(fs*1.5))# + 256)
+    #window = signal.windows.hamming(int(fs*1.5))# + 256)
+    window = signal.windows.hann(int(fs*1.5))# + 256)
 
     feature_fft = [None] * len(trial_file)
 
@@ -626,14 +625,29 @@ def baseline_correct(trial_file, correction_type, input_dir):
     index_tracker = []
             
     #loop all trials
-    for index, trial in enumerate(trial_file["ephys"]):
-        
-        
+    for index, trial_data in enumerate(trial_file.iterrows()):
+
+        combined = np.ma.concatenate([trial_data[1].pre_trial_ephys, trial_data[1].ephys], axis=0)
+
+        trial = np.ma.array(
+                combined.data,
+                mask=np.ma.getmaskarray(combined),
+                copy=False,
+                shrink=False,
+            )
+
+        trial_start_index = trial_data[1].pre_trial_ephys.shape[0]
+        #include 250 ms before. the hamming window will make it contribute vwey ittle
+        fft_start = int(trial_start_index - fs*0.25)
+
         #insert nan value which will be left for baseline data.
         feature_fft[index] = np.nan
 
+        #0.250 ms before the trial until 3.25ms after trial onset
+        all_trial_data = trial[fft_start : fft_start + int(fs*3.5), :]
+
         #check if it is a baseline trial.
-        if trial_file["last_response"][index] == "baseline":
+        if trial_data[1]["last_response"] == "baseline":
             
             #ffts of this trial. 3 time windows.
             fft_baseline_trial = []
@@ -642,25 +656,25 @@ def baseline_correct(trial_file, correction_type, input_dir):
             #loop all channels
             # broadband filter + FFT calculation 
             for channel in range(np.shape(trial)[1]):
-                #3 consequtive seconds with 0.5 sec overlap
-                windowed1 = trial[:int(fs*1.5), channel] * window
-                windowed2 = trial[fs:int(fs*2.5), channel] * window
-                windowed3 = trial[fs*2:int(fs*3.5), channel] * window
+                #3 consequtive seconds with 0.25 sec overlap
+                windowed1 = (all_trial_data[:int(fs*1.5), channel] - all_trial_data[:int(fs*1.5), channel].mean()) * window
+                windowed2 = (all_trial_data[int(fs) : int(fs*2.5), channel] - all_trial_data[int(fs) : int(fs*2.5), channel].mean()) * window
+                windowed3 = (all_trial_data[int(fs*2) : int(fs*3.5), channel] - all_trial_data[int(fs*2) : int(fs*3.5), channel].mean()) * window
 
 
                 # tmp1 = fft_analysis(windowed1[128:-128], 254, fs, 254)[1][0]
                 # tmp2 = fft_analysis(windowed2[128:-128], 254, fs, 254)[1][0]
                 # tmp3 = fft_analysis(windowed3[128:-128], 254, fs, 254)[1][0]
 
-                tmp1 = fft_analysis(windowed1[:int(-fs*0.5)], 254, fs, 254)[1][0]
-                tmp2 = fft_analysis(windowed2[:int(-fs*0.5)], 254, fs, 254)[1][0]
-                tmp3 = fft_analysis(windowed3[:int(-fs*0.5)], 254, fs, 254)[1][0]
+                tmp1 = fft_analysis(windowed1.filled(0), 254, fs, 254)[1][0]
+                tmp2 = fft_analysis(windowed2.filled(0), 254, fs, 254)[1][0]
+                tmp3 = fft_analysis(windowed3.filled(0), 254, fs, 254)[1][0]
 
                 fft_baseline_trial.append([tmp1, tmp2, tmp3])
             fft_baseline.append(fft_baseline_trial)
         
         #if an image trial
-        if trial_file["image_ID"][index] > 0:
+        if trial_data[1]["image_ID"] > 0:
         #NB also includes baseline trials with clicks...
         #if np.logical_and(trial_file["last_response"][index] != "baseline", trial_file["last_response"][index] != "mock"):
             
@@ -672,15 +686,14 @@ def baseline_correct(trial_file, correction_type, input_dir):
             #loop all channels
             for channel in range(np.shape(trial)[1]):
 
-                windowed1 = trial[:int(fs*1.5),channel] * window
-                windowed2 = trial[fs:int(fs*2.5),channel] * window
-                
-                #correct?
-                
+                #3 consequtive seconds with 0.25 sec overlap
+                windowed1 = (all_trial_data[:int(fs*1.5), channel] - all_trial_data[:int(fs*1.5), channel].mean()) * window
+                windowed2 = (all_trial_data[int(fs) : int(fs*2.5), channel] - all_trial_data[int(fs) : int(fs*2.5), channel].mean()) * window
+
                 # tmp1 = fft_analysis(windowed1[128:-128], 254, fs, 254)[1][0]
                 # tmp2 = fft_analysis(windowed2[128:-128], 254, fs, 254)[1][0]
-                tmp1 = fft_analysis(windowed1[:int(-fs*0.5)], 254, fs, 254)[1][0]
-                tmp2 = fft_analysis(windowed2[:int(-fs*0.5)], 254, fs, 254)[1][0]
+                tmp1 = fft_analysis(windowed1.filled(0), 254, fs, 254)[1][0]
+                tmp2 = fft_analysis(windowed2.filled(0), 254, fs, 254)[1][0]
 
                 tmp_1.append(tmp1)
                 tmp_2.append(tmp2)
@@ -688,7 +701,7 @@ def baseline_correct(trial_file, correction_type, input_dir):
             fft_t2.append(np.transpose(tmp_2))
 
         #if last trial in session/block (identified by assessing time jumpt to next trial. look for more than 10/3600 sec timesteps to next trial).
-        if index==len(trial_file)-1 or np.diff(trial_file["clock_time"][index:index+2]) > time_jump:
+        if index == len(trial_file)-1 or np.diff(trial_file["clock_time"].iloc[index:index+2]) > time_jump:
             
             if len(index_tracker) > 0:
         
@@ -700,14 +713,15 @@ def baseline_correct(trial_file, correction_type, input_dir):
                 #loop the image trials
                 for s1, s2, num in zip(fft_t1, fft_t2, index_tracker):
                     # decibel change
-                        # dsec1 = 10*np.log10(np.divide(s1, fft_base_avg.T))
-                        # dsec2 = 10*np.log10(np.divide(s2, fft_base_avg.T))
+                        dsec1 = 10*np.log10(np.divide(s1, fft_base_avg.T))
+                        dsec2 = 10*np.log10(np.divide(s2, fft_base_avg.T))
+                        feature_fft[num] = np.array([dsec1, dsec2])
                     # percentage change
                     # if
                         #do the corrections
-                        per_change_s1 = (100*(np.divide(s1 - fft_base_avg.T, fft_base_avg.T)))
-                        per_change_s2 = (100*(np.divide(s2 - fft_base_avg.T, fft_base_avg.T)))
-                        feature_fft[num] = np.array([per_change_s1, per_change_s2])
+                        # per_change_s1 = (100*(np.divide(s1 - fft_base_avg.T, fft_base_avg.T)))
+                        # per_change_s2 = (100*(np.divide(s2 - fft_base_avg.T, fft_base_avg.T)))
+                        # feature_fft[num] = np.array([per_change_s1, per_change_s2])
                         
                         #check that fft_base_avg is not zero
                         if np.sum(fft_base_avg==0) > 0:
@@ -739,7 +753,7 @@ def baseline_correct(trial_file, correction_type, input_dir):
 
     fft_trials = trial_file[['image_ID', 'clock_time', 'sample_rate', 'last_response',
        'last_motor_response', 'indices_all_responses', 'channels',
-       'repetition_num']]
+       'repetition_num']].copy()
 
     fft_trials[string_save] = feature_fft
     
