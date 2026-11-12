@@ -28,7 +28,7 @@ from matplotlib import pyplot as plt
 
 
 # CNP04 should be first to set up the image structure- #CNP11 not included because of previous surgery. CNP13 excluded because of few old trials. CNP21 has a lot of premature button presses
-subjects = ['CNP21', 'CNP04', 'CNP05', 'CNP08', 'CNP09', 'CNP10', 'CNP12',
+subjects = ['CNP04', 'CNP21', 'CNP05', 'CNP08', 'CNP09', 'CNP10', 'CNP12',
             'CNP14', 'CNP18', 'CNP19', 'CNP20', 'CNP22', 'CNP26', 'CNP27', 'CNP28', 'CNP29']
 
 # bands = ['Delta1', 'Delta2',
@@ -941,6 +941,7 @@ while exists:
             batch = pickle.load(f)
             for k in batch['permutated_confusion_mat']:
                 shuffled_confusion_matrices.append(k)
+                shuffled_accuracies.append(np.trace(k) / np.sum(k))
                 
         done_iterations += shuffles_per_batch
 
@@ -1135,7 +1136,6 @@ while not saved:
         axes[1, 1].set_yticks([])
         axes[1, 1].set_ylabel('')
 
-        rue
         plt.savefig(os.path.join(savedir, figure_name))
         plt.show()
 
