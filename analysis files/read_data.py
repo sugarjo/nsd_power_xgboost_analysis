@@ -150,7 +150,7 @@ def load_data(input_dir, field, button_limit, trial_dir=""):
     presentation_time = relevant_trials.clock_time.values
     responses = relevant_trials.last_response.values 
     repetitions = relevant_trials.repetition_num.values 
-    time_last_presentation = relevant_trials.time_since_last_presentation
+    time_last_presentation = relevant_trials.time_since_last_presentation.values
 
     dataset_shape = [relevant_trials.shape[0], len(channels)]
     dataset_shape.extend(trial_shape)

@@ -753,7 +753,7 @@ def baseline_correct(trial_file, correction_type, input_dir):
 
     fft_trials = trial_file[['image_ID', 'clock_time', 'sample_rate', 'last_response',
        'last_motor_response', 'indices_all_responses', 'channels',
-       'repetition_num']].copy()
+       'repetition_num', 'time_since_last_presentation']].copy()
 
     fft_trials[string_save] = feature_fft
     
