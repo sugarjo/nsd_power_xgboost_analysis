@@ -44,6 +44,8 @@ from extract_vertex_stats import GROUPS, trial_types  # noqa: E402
 from extract_parcel_betas import parcel_index  # noqa: E402
 
 SUBJECTS = range(1, 9)
+TITLES = {"pooled": "Pooled (paper)", "demeaned": "Pooled, session means removed",
+          "shuffled": "Pooled, shuffled", "shuffled_demeaned": "Shuffled, session means removed"}
 SESSIONS = [5, 10, 15, 20]
 CONTRASTS = {  # name: (title, positive groups, negative groups, shuffled positive, shuffled negative)
     "hits_vs_cr": ("Hits > correct rejections", ["recent", "consolidated"], ["cr"], ["perm_a"], ["perm_b"]),
@@ -68,6 +70,20 @@ def welch_t(n, s, ss, pos, neg):
     return np.nan_to_num(t, nan=0.0, posinf=0.0, neginf=0.0)
 
 
+def demean_sessions(n, s, ss):
+    """Remove each session's mean (over its correct trials) from the per-session sums.
+
+    With mu the session mean, sum' = sum - n*mu and sumsq' = sumsq - 2*mu*sum + n*mu^2.
+    Removes slow signal drifts between sessions, which otherwise leak into
+    pooled contrasts whose trial mix changes over sessions (hits are rare
+    in early sessions)."""
+    real = [G[g] for g in ("cr", "recent", "consolidated")]
+    mu = s[:, real].sum(1) / n[:, real].sum(1)[:, None]             # sessions x vertices
+    s2 = s - n[:, :, None] * mu[:, None]
+    ss2 = ss - 2 * mu[:, None] * s + n[:, :, None] * mu[:, None] ** 2
+    return s2, ss2
+
+
 def load_subject(data_dir: Path, subject: int, hemi: str):
     """Per-session n (sessions x groups), sum and sumsq (sessions x groups x vertices), float64."""
     files = sorted((data_dir / f"subj{subject:02d}").glob(f"session*_{hemi}_stats.npz"))
@@ -83,7 +99,7 @@ def parcel_psc_t(data_dir: Path, subject: int, hours: float) -> dict:
     parts = []
     for session, trials in beh.groupby("SESSION"):
         lh, rh = (np.load(data_dir / f"subj{subject:02d}" / f"session{session:02d}_{h}_psc.npy") for h in ("lh", "rh"))
-        parts.append(pd.DataFrame(np.nanmean([lh, rh], 0)).assign(group=trials["group"].to_numpy()))
+        parts.append(pd.DataFrame(np.mean([lh, rh], 0)).assign(group=trials["group"].to_numpy()))
     df = pd.concat(parts)
     x = df.drop(columns="group")
     out = {}
@@ -113,16 +129,21 @@ def main():
     args = ap.parse_args()
 
     # t maps: contrast -> column ("session05" ... "pooled", "shuffled") -> hemi -> subjects x vertices
-    columns = [f"session{s:02d}" for s in SESSIONS] + ["pooled", "shuffled"]
+    columns = [f"session{s:02d}" for s in SESSIONS] + ["pooled", "demeaned", "shuffled", "shuffled_demeaned"]
     tmaps = {c: {col: {"lh": [], "rh": []} for col in columns} for c in CONTRASTS}
     for subject in SUBJECTS:
         for hemi in ("lh", "rh"):
             sessions, n, s, ss = load_subject(args.data_dir, subject, hemi)
+            sd, ssd = demean_sessions(n, s, ss)
             print(f"subj{subject:02d} {hemi}: {len(sessions)} sessions, correct trials "
                   + ", ".join(f"{g} {int(n[:, G[g]].sum())}" for g in GROUPS[:3]), flush=True)
             for name, (_, pos, neg, ppos, pneg) in CONTRASTS.items():
                 for col in columns:
-                    if col == "shuffled":
+                    if col == "shuffled_demeaned":
+                        t = welch_t(n.sum(0), sd.sum(0), ssd.sum(0), ppos, pneg)
+                    elif col == "demeaned":
+                        t = welch_t(n.sum(0), sd.sum(0), ssd.sum(0), pos, neg)
+                    elif col == "shuffled":
                         t = welch_t(n.sum(0), s.sum(0), ss.sum(0), ppos, pneg)
                     elif col == "pooled":
                         t = welch_t(n.sum(0), s.sum(0), ss.sum(0), pos, neg)
@@ -136,23 +157,24 @@ def main():
     columns_idx = {h: parcel_index(args.data_dir, h)[0] for h in ("lh", "rh")}
     psc = {s: parcel_psc_t(args.data_dir, s, args.hours) for s in SUBJECTS}
     for name in CONTRASTS:
-        table = {}
-        for k, subject in enumerate(SUBJECTS):
-            per_hemi = [pd.Series(tmaps[name]["pooled"][h][k]).groupby(columns_idx[h]).mean() for h in ("lh", "rh")]
-            table[f"subj{subject:02d}"] = (per_hemi[0] + per_hemi[1]).drop(-1, errors="ignore").to_numpy() / 2
-        t = pd.DataFrame(table, index=parcels)
-        t.insert(0, "mean_t", t.mean(axis=1))
-        t.insert(1, "n_positive", (t.iloc[:, 1:] > 0).sum(axis=1))
-        t.index.name = "parcel"
-        t.to_csv(args.out_dir / f"nsd_paper_vertex_{name}_parcels.csv")
+        for variant, suffix in [("pooled", ""), ("demeaned", "_demeaned")]:
+            table = {}
+            for k, subject in enumerate(SUBJECTS):
+                per_hemi = [pd.Series(tmaps[name][variant][h][k]).groupby(columns_idx[h]).mean() for h in ("lh", "rh")]
+                table[f"subj{subject:02d}"] = (per_hemi[0] + per_hemi[1]).drop(-1, errors="ignore").to_numpy() / 2
+            t = pd.DataFrame(table, index=parcels)
+            t.insert(0, "mean_t", t.mean(axis=1))
+            t.insert(1, "n_positive", (t.iloc[:, 1:] > 0).sum(axis=1))
+            t.index.name = "parcel"
+            t.to_csv(args.out_dir / f"nsd_paper_vertex_{name}{suffix}_parcels.csv")
+            print(f"\n{CONTRASTS[name][0]}, {TITLES[variant]} (mean over vertices of t, group mean):")
+            top = t.sort_values("mean_t")[["mean_t", "n_positive"]]
+            print(pd.concat([top.head(6), top.tail(6)]).round(2).to_string())
         p = pd.DataFrame({f"subj{s:02d}": psc[s][name] for s in SUBJECTS}, index=parcels)
         p.insert(0, "mean_t", p.mean(axis=1))
         p.insert(1, "n_positive", (p.iloc[:, 1:] > 0).sum(axis=1))
         p.index.name = "parcel"
         p.to_csv(args.out_dir / f"nsd_paper_psc_{name}.csv")
-        print(f"\n{CONTRASTS[name][0]} (mean over vertices of pooled t, group mean):")
-        top = t.sort_values("mean_t")[["mean_t", "n_positive"]]
-        print(pd.concat([top.head(6), top.tail(6)]).round(2).to_string())
 
     # figure: per contrast, participant 1 and the group mean
     geo = load_flatmap(args.cache)
@@ -169,7 +191,7 @@ def main():
             draw_t(axes[r, c], geo, t_lh, rng, args.threshold, border)
             if r == 0 or r == 2:
                 axes[r, c].set_title(col.replace("session", "Session ") if col.startswith("session")
-                                     else ("Pooled sessions" if col == "pooled" else "Pooled, shuffled labels"),
+                                     else TITLES[col],
                                      fontsize=10, color=INK)
         axes[r, 0].text(-0.06, 0.5, f"{CONTRASTS[name][0]}\n{who}", transform=axes[r, 0].transAxes, rotation=90,
                         ha="right", va="center", fontsize=9, color=INK)
@@ -190,7 +212,8 @@ def main():
              f"Per participant and vertex: Welch t between trial types, for single sessions and pooled across "
              f"sessions; group = simple mean of the 8 t maps.\nShown where |t| > {args.threshold:g} (gray otherwise); "
              f"flattened left hemisphere with HCP-MMP1 borders. Hits = recent + consolidated; recent: last shown "
-             f"≤ {args.hours:g} h before, consolidated: > {args.hours:g} h. Shuffled: labels shuffled within session.",
+             f"≤ {args.hours:g} h before, consolidated: > {args.hours:g} h. Shuffled: labels shuffled within session (keeps each session's trial mix, so it shows what session-to-session drift alone produces).\n"
+             f"Session means removed: each session's mean over its correct trials subtracted per vertex before pooling.",
              fontsize=8, color=INK_MUTED, va="top")
     path = args.out_dir / "nsd_paper_vertex.png"
     fig.savefig(path, dpi=200, bbox_inches="tight")
