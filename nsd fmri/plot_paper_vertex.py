@@ -99,7 +99,7 @@ def draw_t(ax, geo, t_lh, rng, threshold, border):
     rgb[medial] = np.where((geo.sulc[medial] > 0)[:, None], SULCUS, GYRUS)
     show = np.abs(t_lh) > threshold
     rgb[show] = DIVERGING(Normalize(-rng, rng)(t_lh[show]))[:, :3]
-    rgb[border] = rgb[border] * 0.75 + 0.25 * np.array(to_rgb(INK))
+    rgb[border] = rgb[border] * 0.88 + 0.12 * np.array(to_rgb(INK))
     draw_flat(ax, geo.patch_xy, geo.patch_faces, rgb[geo.vno])
 
 
@@ -173,8 +173,11 @@ def main():
                                      fontsize=10, color=INK)
         axes[r, 0].text(-0.06, 0.5, f"{CONTRASTS[name][0]}\n{who}", transform=axes[r, 0].transAxes, rotation=90,
                         ha="right", va="center", fontsize=9, color=INK)
-    for c, rng in [(1.5, 8), (4.5, 40)]:
-        cax = fig.add_axes([0.07 + (0.92 / len(columns)) * c - 0.06, 0.075, 0.12, 0.01])
+    n_single = len(SESSIONS)
+    for cols, rng in [(range(n_single), 8), (range(n_single, len(columns)), 40)]:
+        left, right = axes[-1, cols[0]].get_position(), axes[-1, cols[-1]].get_position()
+        mid = (left.x0 + right.x1) / 2
+        cax = fig.add_axes([mid - 0.07, left.y0 - 0.025, 0.14, 0.01])
         cb = fig.colorbar(plt.cm.ScalarMappable(norm=Normalize(-rng, rng), cmap=DIVERGING), cax=cax,
                           orientation="horizontal", extend="both")
         cb.outline.set_visible(False)
