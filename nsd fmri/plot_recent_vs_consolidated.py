@@ -46,18 +46,21 @@ CONTRASTS = {
 }
 
 
-def trial_table(beh: Path, hours: float) -> pd.DataFrame:
+def trial_table(beh: Path, hours: float, max_lag_days: float | None = None) -> pd.DataFrame:
     """Behaviour in presentation order with the trial type of every trial."""
     b = pd.read_csv(beh, sep="\t").sort_values(["SESSION", "RUN", "TRIAL"]).reset_index(drop=True)
     since = b.sort_values("TIME").groupby("73KID")["TIME"].diff() * 24          # hours, NaN on first showing
     b["since_last_h"] = since.reindex(b.index)
     b["type"] = np.where(b.ISOLD == 0, "new", np.where(b.since_last_h > hours, "consolidated", "recent"))
+    if max_lag_days is not None:                         # repeats outside the lag window are left out
+        b.loc[b.since_last_h > max_lag_days * 24, "type"] = "excluded"
     return b
 
 
-def subject_means(data_dir: Path, subject: int, hours: float, all_trials: bool) -> pd.DataFrame | None:
+def subject_means(data_dir: Path, subject: int, hours: float, all_trials: bool,
+                  max_lag_days: float | None = None) -> pd.DataFrame | None:
     """Trial type x parcel mean (hemispheres averaged) for one subject, from the sessions available."""
-    beh = trial_table(data_dir / f"subj{subject:02d}_responses.tsv", hours)
+    beh = trial_table(data_dir / f"subj{subject:02d}_responses.tsv", hours, max_lag_days)
     parts = []
     for session, trials in beh.groupby("SESSION"):
         files = [data_dir / f"subj{subject:02d}" / f"session{session:02d}_{h}.npy" for h in ("lh", "rh")]
@@ -87,11 +90,16 @@ def main():
     ap.add_argument("--all-trials", action="store_true", help="include incorrect responses")
     ap.add_argument("--fdr", type=float, default=0.05)
     ap.add_argument("--n-labels", type=int, default=6)
+    ap.add_argument("--max-lag-days", type=float, help="leave out repeats last shown longer ago than this "
+                    "(e.g. 13.18 = longest sEEG lag)")
     args = ap.parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)
 
     parcels = (args.data_dir / "parcels.txt").read_text().split()
-    means = {s: m for s in range(1, 9) if (m := subject_means(args.data_dir, s, args.hours, args.all_trials)) is not None}
+    suffix = f"_maxlag{args.max_lag_days:g}d" if args.max_lag_days is not None else ""
+    window = (f" Only repeats last shown ≤ {args.max_lag_days:g} days before (the sEEG lag range)."
+              if args.max_lag_days is not None else "")
+    means = {s: m for s in range(1, 9) if (m := subject_means(args.data_dir, s, args.hours, args.all_trials, args.max_lag_days)) is not None}
     n_subj = len(means)
 
     results = {}
@@ -104,8 +112,8 @@ def main():
                             "n_subjects": diff.notna().sum(), "n_positive": (diff > 0).sum()})
         res["q"] = fdr_bh(res["p"])
         res.index.name = "parcel"
-        res.to_csv(args.out_dir / f"nsd_{name}.csv")
-        diff.to_csv(args.out_dir / f"nsd_{name}_subjects.csv")
+        res.to_csv(args.out_dir / f"nsd_{name}{suffix}.csv")
+        diff.to_csv(args.out_dir / f"nsd_{name}{suffix}_subjects.csv")
         results[name] = (label, res)
         top = res[res.q < args.fdr].sort_values("t")
         print(f"\n{label}: {len(top)} of {len(res)} parcels with q < {args.fdr}")
@@ -142,12 +150,12 @@ def main():
              f"Single-trial betas (betas_fithrf_GLMdenoise_RR, fsaverage), z-scored per vertex within session, averaged "
              f"within HCP-MMP1 parcels and over hemispheres. {trials.capitalize()} of {n_subj} subjects.\n"
              f"Recent: last shown ≤ {args.hours:g} h before (same session); consolidated: > {args.hours:g} h before "
-             f"(earlier session); new vs seen weights recent and consolidated equally.\n"
+             f"(earlier session); new vs seen weights recent and consolidated equally.{window}\n"
              f"Per subject the mean of each trial type is taken, then subjects are pooled: mean (left), two-sided "
              f"one-sample t-test, Benjamini-Hochberg FDR across 180 parcels (right; gray: q ≥ {args.fdr}). "
              f"Flatmap of the left hemisphere.",
              fontsize=8, color=INK_MUTED, va="top")
-    path = args.out_dir / "nsd_recent_vs_consolidated.png"
+    path = args.out_dir / f"nsd_recent_vs_consolidated{suffix}.png"
     fig.savefig(path, dpi=200, bbox_inches="tight")
     print("wrote", path)
 

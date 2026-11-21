@@ -48,7 +48,7 @@ LOG_TICKS = {"1 second": 1, "1 minute": 60, "1 hour": 3600, "1 day": 86400, "1 w
 YLIM = (-0.6, 1.0)
 
 
-def nsd_trials(data_dir: Path) -> pd.DataFrame:
+def nsd_trials(data_dir: Path, max_lag_days: float | None = None) -> pd.DataFrame:
     """subject, session, lag_s (NaN on first showing), isold, said_old (NaN without response)."""
     parts = []
     for s in range(1, 9):
@@ -58,7 +58,10 @@ def nsd_trials(data_dir: Path) -> pd.DataFrame:
         parts.append(pd.DataFrame({"subject": f"subj{s:02d}", "session": b.SESSION.to_numpy(),
                                    "lag_s": lag.reindex(b.index).to_numpy(), "isold": b.ISOLD.to_numpy(),
                                    "said_old": said_old}))
-    return pd.concat(parts, ignore_index=True)
+    t = pd.concat(parts, ignore_index=True)
+    if max_lag_days is not None:                          # drop repeats outside the lag window
+        t = t[~(t.lag_s > max_lag_days * 86400)]
+    return t
 
 
 def seeg_trials(path: Path, session_gap_h: float, exclude=()) -> pd.DataFrame:
@@ -100,12 +103,14 @@ def main():
     ap.add_argument("--out-dir", type=Path, default=HERE / "figures")
     ap.add_argument("--hours", type=float, default=3.0)
     ap.add_argument("--session-gap", type=float, default=1.0, help="sEEG session break, hours")
+    ap.add_argument("--nsd-max-lag-days", type=float, help="NSD: leave out repeats last shown longer ago "
+                    "than this (e.g. 13.18 = longest sEEG lag)")
     ap.add_argument("--exclude", nargs="+", default=[], help="sEEG subjects to leave out, e.g. CNP21")
     ap.add_argument("--min-frac", type=float, default=1.0, help="participants needed for a bin's mean line")
     args = ap.parse_args()
     rng = np.random.default_rng(0)
 
-    data = {"NSD fMRI": nsd_trials(args.nsd_dir), "sEEG": seeg_trials(args.seeg, args.session_gap, args.exclude)}
+    data = {"NSD fMRI": nsd_trials(args.nsd_dir, args.nsd_max_lag_days), "sEEG": seeg_trials(args.seeg, args.session_gap, args.exclude)}
     xmin, xmax = np.log(1), np.log(LOG_TICKS["1 year"])
     fig, axes = plt.subplots(2, 2, figsize=(12, 9), facecolor="white",
                              gridspec_kw=dict(width_ratios=[1.6, 1], wspace=0.22, hspace=0.42))
@@ -167,11 +172,14 @@ def main():
     fig.text(0.07, 0.0, "Adjusted hit rate = hit rate minus the session's false-alarm rate (method of Allen et al. "
              "2022, Fig. 4a); trials without a response excluded. Left: rounded log(seconds) bins; dots = one "
              "session per bin;\nblack = mean over participants ± 1 s.e.m. for bins with data from "
-             f"{'all' if args.min_frac == 1 else f'≥ {args.min_frac:.0%} of the'} participants. Right: dots = "
+             f"{'all' if args.min_frac == 1 else f'≥ {args.min_frac:.0%} of the'} participants.\nRight: dots = "
              "sessions, thin lines = participants, black = mean ± 1 s.e.m. sEEG sessions split at breaks > "
-             f"{args.session_gap:g} h." + (f" sEEG without {', '.join(args.exclude)}." if args.exclude else ""), fontsize=8, color=INK_MUTED, va="top")
+             f"{args.session_gap:g} h." + (f" sEEG without {', '.join(args.exclude)}." if args.exclude else "")
+             + (f" NSD: only repeats last shown ≤ {args.nsd_max_lag_days:g} days before (the sEEG lag range)."
+                if args.nsd_max_lag_days is not None else ""), fontsize=8, color=INK_MUTED, va="top")
     out = pd.concat(rows).reset_index().set_index(["dataset", "subject"])
     suffix = "".join(f"_without_{s}" for s in args.exclude)
+    suffix += f"_nsdmaxlag{args.nsd_max_lag_days:g}d" if args.nsd_max_lag_days is not None else ""
     out.to_csv(args.out_dir / f"behaviour_fmri_seeg{suffix}.csv")
     path = args.out_dir / f"behaviour_fmri_seeg{suffix}.png"
     fig.savefig(path, dpi=200, bbox_inches="tight")
