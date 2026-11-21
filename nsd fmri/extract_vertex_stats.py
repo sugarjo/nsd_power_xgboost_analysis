@@ -40,13 +40,15 @@ from extract_parcel_betas import BUCKET, fetch, parcel_index  # noqa: E402
 GROUPS = ["cr", "recent", "consolidated", "perm_a", "perm_b", "perm_c", "perm_d"]
 
 
-def trial_types(beh: Path, hours: float) -> pd.DataFrame:
+def trial_types(beh: Path, hours: float, max_lag_days: float | None = None) -> pd.DataFrame:
     """Behaviour in presentation order with cr / recent / consolidated / '' (incorrect)."""
     b = pd.read_csv(beh, sep="\t").sort_values(["SESSION", "RUN", "TRIAL"]).reset_index(drop=True)
     since = b.sort_values("TIME").groupby("73KID")["TIME"].diff() * 24
     b["since_last_h"] = since.reindex(b.index)
     kind = np.where(b.ISOLD == 0, "cr", np.where(b.since_last_h > hours, "consolidated", "recent"))
     b["group"] = np.where(b.ISCORRECT == 1, kind, "")
+    if max_lag_days is not None:                    # repeats last shown longer ago are left out
+        b.loc[b.since_last_h > max_lag_days * 24, "group"] = ""
     return b
 
 
@@ -71,6 +73,8 @@ def main():
     ap.add_argument("--sessions", type=int, nargs="+", help="only these sessions (default: all)")
     ap.add_argument("--out-dir", type=Path, default=REPO / "data" / "nsd")
     ap.add_argument("--hours", type=float, default=3.0)
+    ap.add_argument("--max-lag-days", type=float, help="leave out repeats last shown longer ago (writes "
+                    "_stats_maxlag<d>d.npz; e.g. 13.18 = longest sEEG lag)")
     ap.add_argument("--workers", type=int, default=4)
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
@@ -79,13 +83,15 @@ def main():
     jobs = []
     for subject in args.subjects:
         beh = trial_types(fetch(f"{BUCKET}/nsddata/ppdata/subj{subject:02d}/behav/responses.tsv",
-                                args.out_dir / f"subj{subject:02d}_responses.tsv"), args.hours)
+                                args.out_dir / f"subj{subject:02d}_responses.tsv"), args.hours,
+                          args.max_lag_days)
+        suffix = f"_maxlag{args.max_lag_days:g}d" if args.max_lag_days is not None else ""
         (args.out_dir / f"subj{subject:02d}").mkdir(exist_ok=True)
         for session, trials in beh.groupby("SESSION"):
             if args.sessions and session not in args.sessions:
                 continue
             for hemi in ("lh", "rh"):
-                out = args.out_dir / f"subj{subject:02d}" / f"session{session:02d}_{hemi}_stats.npz"
+                out = args.out_dir / f"subj{subject:02d}" / f"session{session:02d}_{hemi}_stats{suffix}.npz"
                 if not out.exists():
                     jobs.append((subject, session, hemi, trials["group"].to_numpy(), out))
     print(f"{len(jobs)} session files to process", flush=True)
@@ -116,9 +122,10 @@ def main():
             sel = column == p
             if sel.any():
                 psc[:, p] = betas[sel].mean(0)
-        psc_out = out.with_name(out.name.replace("_stats.npz", "_psc.npy"))
-        np.save(psc_out.with_suffix(".tmp.npy"), psc)
-        os.replace(psc_out.with_suffix(".tmp.npy"), psc_out)
+        psc_out = out.with_name(f"session{out.name[7:9]}_{hemi}_psc.npy")
+        if not psc_out.exists():                           # same for every lag window
+            np.save(psc_out.with_suffix(".tmp.npy"), psc)
+            os.replace(psc_out.with_suffix(".tmp.npy"), psc_out)
         tmp = out.with_suffix(".tmp.npz")
         np.savez(tmp, n=n, sum=s, sumsq=ss, groups=np.array(GROUPS))
         os.replace(tmp, out)

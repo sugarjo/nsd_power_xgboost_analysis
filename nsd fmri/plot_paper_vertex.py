@@ -84,18 +84,18 @@ def demean_sessions(n, s, ss):
     return s2, ss2
 
 
-def load_subject(data_dir: Path, subject: int, hemi: str):
+def load_subject(data_dir: Path, subject: int, hemi: str, window: str = ""):
     """Per-session n (sessions x groups), sum and sumsq (sessions x groups x vertices), float64."""
-    files = sorted((data_dir / f"subj{subject:02d}").glob(f"session*_{hemi}_stats.npz"))
+    files = sorted((data_dir / f"subj{subject:02d}").glob(f"session*_{hemi}_stats{window}.npz"))
     sessions = [int(f.name[7:9]) for f in files]
     d = [np.load(f) for f in files]
     return (sessions, np.stack([x["n"] for x in d]).astype(float),
             np.stack([x["sum"] for x in d]).astype(float), np.stack([x["sumsq"] for x in d]).astype(float))
 
 
-def parcel_psc_t(data_dir: Path, subject: int, hours: float) -> dict:
+def parcel_psc_t(data_dir: Path, subject: int, hours: float, max_lag_days: float | None = None) -> dict:
     """Welch t per parcel on the raw parcel-mean betas (hemispheres averaged), pooled sessions."""
-    beh = trial_types(data_dir / f"subj{subject:02d}_responses.tsv", hours)
+    beh = trial_types(data_dir / f"subj{subject:02d}_responses.tsv", hours, max_lag_days)
     parts = []
     for session, trials in beh.groupby("SESSION"):
         lh, rh = (np.load(data_dir / f"subj{subject:02d}" / f"session{session:02d}_{h}_psc.npy") for h in ("lh", "rh"))
@@ -126,14 +126,17 @@ def main():
     ap.add_argument("--cache", type=Path, default=REPO / "data" / "fsaverage")
     ap.add_argument("--hours", type=float, default=3.0, help="must match extract_vertex_stats.py")
     ap.add_argument("--threshold", type=float, default=3.0)
+    ap.add_argument("--max-lag-days", type=float, help="use the stats from extract_vertex_stats.py "
+                    "--max-lag-days (repeats last shown longer ago left out)")
     args = ap.parse_args()
+    window = f"_maxlag{args.max_lag_days:g}d" if args.max_lag_days is not None else ""
 
     # t maps: contrast -> column ("session05" ... "pooled", "shuffled") -> hemi -> subjects x vertices
     columns = [f"session{s:02d}" for s in SESSIONS] + ["pooled", "demeaned", "shuffled", "shuffled_demeaned"]
     tmaps = {c: {col: {"lh": [], "rh": []} for col in columns} for c in CONTRASTS}
     for subject in SUBJECTS:
         for hemi in ("lh", "rh"):
-            sessions, n, s, ss = load_subject(args.data_dir, subject, hemi)
+            sessions, n, s, ss = load_subject(args.data_dir, subject, hemi, window)
             sd, ssd = demean_sessions(n, s, ss)
             print(f"subj{subject:02d} {hemi}: {len(sessions)} sessions, correct trials "
                   + ", ".join(f"{g} {int(n[:, G[g]].sum())}" for g in GROUPS[:3]), flush=True)
@@ -155,7 +158,7 @@ def main():
     # parcel summaries
     parcels = (args.data_dir / "parcels.txt").read_text().split()
     columns_idx = {h: parcel_index(args.data_dir, h)[0] for h in ("lh", "rh")}
-    psc = {s: parcel_psc_t(args.data_dir, s, args.hours) for s in SUBJECTS}
+    psc = {s: parcel_psc_t(args.data_dir, s, args.hours, args.max_lag_days) for s in SUBJECTS}
     for name in CONTRASTS:
         for variant, suffix in [("pooled", ""), ("demeaned", "_demeaned")]:
             table = {}
@@ -166,7 +169,7 @@ def main():
             t.insert(0, "mean_t", t.mean(axis=1))
             t.insert(1, "n_positive", (t.iloc[:, 1:] > 0).sum(axis=1))
             t.index.name = "parcel"
-            t.to_csv(args.out_dir / f"nsd_paper_vertex_{name}{suffix}_parcels.csv")
+            t.to_csv(args.out_dir / f"nsd_paper_vertex_{name}{suffix}{window}_parcels.csv")
             print(f"\n{CONTRASTS[name][0]}, {TITLES[variant]} (mean over vertices of t, group mean):")
             top = t.sort_values("mean_t")[["mean_t", "n_positive"]]
             print(pd.concat([top.head(6), top.tail(6)]).round(2).to_string())
@@ -174,7 +177,7 @@ def main():
         p.insert(0, "mean_t", p.mean(axis=1))
         p.insert(1, "n_positive", (p.iloc[:, 1:] > 0).sum(axis=1))
         p.index.name = "parcel"
-        p.to_csv(args.out_dir / f"nsd_paper_psc_{name}.csv")
+        p.to_csv(args.out_dir / f"nsd_paper_psc_{name}{window}.csv")
 
     # figure: per contrast, participant 1 and the group mean
     geo = load_flatmap(args.cache)
@@ -213,9 +216,11 @@ def main():
              f"sessions; group = simple mean of the 8 t maps.\nShown where |t| > {args.threshold:g} (gray otherwise); "
              f"flattened left hemisphere with HCP-MMP1 borders. Hits = recent + consolidated; recent: last shown "
              f"≤ {args.hours:g} h before, consolidated: > {args.hours:g} h. Shuffled: labels shuffled within session (keeps each session's trial mix, so it shows what session-to-session drift alone produces).\n"
-             f"Session means removed: each session's mean over its correct trials subtracted per vertex before pooling.",
+             f"Session means removed: each session's mean over its correct trials subtracted per vertex before pooling."
+             + (f" Only repeats last shown ≤ {args.max_lag_days:g} days before (the sEEG lag range)."
+                if args.max_lag_days is not None else ""),
              fontsize=8, color=INK_MUTED, va="top")
-    path = args.out_dir / "nsd_paper_vertex.png"
+    path = args.out_dir / f"nsd_paper_vertex{window}.png"
     fig.savefig(path, dpi=200, bbox_inches="tight")
     print("wrote", path)
 
