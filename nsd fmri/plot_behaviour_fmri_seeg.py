@@ -61,8 +61,9 @@ def nsd_trials(data_dir: Path) -> pd.DataFrame:
     return pd.concat(parts, ignore_index=True)
 
 
-def seeg_trials(path: Path, session_gap_h: float) -> pd.DataFrame:
-    b = pd.DataFrame(pickle.load(open(path, "rb"))).sort_values(["subject", "clock_time"]).reset_index(drop=True)
+def seeg_trials(path: Path, session_gap_h: float, exclude=()) -> pd.DataFrame:
+    b = pd.DataFrame(pickle.load(open(path, "rb")))
+    b = b[~b.subject.isin(exclude)].sort_values(["subject", "clock_time"]).reset_index(drop=True)
     b["session"] = (b.groupby("subject").clock_time.diff() > session_gap_h * 3600).groupby(b.subject).cumsum()
     b["lag_s"] = b.groupby(["subject", "image ID"]).clock_time.diff()
     b["isold"] = b.lag_s.notna().astype(int)
@@ -99,11 +100,12 @@ def main():
     ap.add_argument("--out-dir", type=Path, default=HERE / "figures")
     ap.add_argument("--hours", type=float, default=3.0)
     ap.add_argument("--session-gap", type=float, default=1.0, help="sEEG session break, hours")
+    ap.add_argument("--exclude", nargs="+", default=[], help="sEEG subjects to leave out, e.g. CNP21")
     ap.add_argument("--min-frac", type=float, default=1.0, help="participants needed for a bin's mean line")
     args = ap.parse_args()
     rng = np.random.default_rng(0)
 
-    data = {"NSD fMRI": nsd_trials(args.nsd_dir), "sEEG": seeg_trials(args.seeg, args.session_gap)}
+    data = {"NSD fMRI": nsd_trials(args.nsd_dir), "sEEG": seeg_trials(args.seeg, args.session_gap, args.exclude)}
     xmin, xmax = np.log(1), np.log(LOG_TICKS["1 year"])
     fig, axes = plt.subplots(2, 2, figsize=(12, 9), facecolor="white",
                              gridspec_kw=dict(width_ratios=[1.6, 1], wspace=0.22, hspace=0.42))
@@ -167,10 +169,11 @@ def main():
              "session per bin;\nblack = mean over participants ± 1 s.e.m. for bins with data from "
              f"{'all' if args.min_frac == 1 else f'≥ {args.min_frac:.0%} of the'} participants. Right: dots = "
              "sessions, thin lines = participants, black = mean ± 1 s.e.m. sEEG sessions split at breaks > "
-             f"{args.session_gap:g} h.", fontsize=8, color=INK_MUTED, va="top")
+             f"{args.session_gap:g} h." + (f" sEEG without {', '.join(args.exclude)}." if args.exclude else ""), fontsize=8, color=INK_MUTED, va="top")
     out = pd.concat(rows).reset_index().set_index(["dataset", "subject"])
-    out.to_csv(args.out_dir / "behaviour_fmri_seeg.csv")
-    path = args.out_dir / "behaviour_fmri_seeg.png"
+    suffix = "".join(f"_without_{s}" for s in args.exclude)
+    out.to_csv(args.out_dir / f"behaviour_fmri_seeg{suffix}.csv")
+    path = args.out_dir / f"behaviour_fmri_seeg{suffix}.png"
     fig.savefig(path, dpi=200, bbox_inches="tight")
     print("wrote", path)
 
