@@ -89,7 +89,10 @@ def main():
             ranked = pd.Series(m).groupby(parcel).mean().drop("", errors="ignore").sort_values()
             label_parcels(ax, geo, [r for r in ranked.index[-args.n_labels:][::-1] if ranked[r] > 0]
                           + [r for r in ranked.index[:args.n_labels] if ranked[r] < 0])
-        ax.set_title(f"{title}\nmean conjunction t, |t| > {args.threshold:g} on {frac:.1%} of cortex",
+        detail = (f"|t| > {args.threshold:g} on {frac:.1%} of cortex" if args.threshold > 0 else
+                  f"all values, |t| > 3 on {(np.abs(m[cortex]) > 3).mean():.1%} of cortex, max |t| "
+                  f"{np.abs(m[cortex]).max():.1f}")
+        ax.set_title(f"{title}\nmean conjunction t, {detail}",
                      fontsize=11.5, color=INK, loc="left")
         print(f"{k}: |mean conjunction t| > {args.threshold:g} on {frac:.2%} of cortex; max |t| "
               f"{np.abs(m[cortex]).max():.1f}")
@@ -107,12 +110,14 @@ def main():
              "Per participant and vertex: Welch t of consolidated hits vs correct rejections (new) and vs recent hits; "
              "correct trials, raw betas, session means removed, pooled across sessions;\nright hemisphere mapped onto "
              "the left (xhemi) and averaged. Conjunction t = the smaller of the two when both share a sign, else 0; "
-             f"mean of 8 participants, shown where |t| > {args.threshold:g}\n(as in Allen et al. 2022, Fig. 4b). "
-             "B: labels shuffled within each session (hits vs correct rejections; consolidated vs recent hits). "
+             + (f"mean of 8 participants, shown where |t| > {args.threshold:g}\n(as in Allen et al. 2022, Fig. 4b). "
+                if args.threshold > 0 else "mean of 8 participants, all values shown (no threshold)\n(otherwise as "
+                "in Allen et al. 2022, Fig. 4b). ")
+             + "B: labels shuffled within each session (hits vs correct rejections; consolidated vs recent hits). "
              "Recent: last shown ≤ 3 h before; consolidated: > 3 h"
              + (f" and ≤ {args.max_lag_days:g} days" if args.max_lag_days is not None else "") + ".",
              fontsize=8.5, color=INK_MUTED, va="top")
-    path = args.out_dir / f"nsd_vertex_consolidation_shuffle{window}.png"
+    path = args.out_dir / f"nsd_vertex_consolidation_shuffle{window}{'' if args.threshold > 0 else '_unthresholded'}.png"
     fig.savefig(path, dpi=200, bbox_inches="tight")
     print("wrote", path)
 
