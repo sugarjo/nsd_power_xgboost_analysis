@@ -179,20 +179,27 @@ def main():
         p.index.name = "parcel"
         p.to_csv(args.out_dir / f"nsd_paper_psc_{name}{window}.csv")
 
-    # figure: per contrast, participant 1 and the group mean
+    # every participant's t maps (both hemispheres), for later use; the figure shows the group mean only
+    tpath = args.data_dir / f"nsd_paper_vertex{window}_tmaps.npz"
+    np.savez_compressed(tpath, subjects=np.array([f"subj{s:02d}" for s in SUBJECTS]),
+                        **{f"{name}__{col}__{h}": np.array(tmaps[name][col][h], dtype=np.float32)
+                           for name in CONTRASTS for col in columns for h in ("lh", "rh")})
+    print("wrote", tpath)
+
+    # figure: per contrast, the group mean
     geo = load_flatmap(args.cache)
     border = geo.border
-    rows = [(name, who) for name in CONTRASTS for who in ("participant 1", "mean of 8 participants")]
-    fig, axes = plt.subplots(len(rows), len(columns), figsize=(3.3 * len(columns), 3.1 * len(rows)),
+    rows = [(name, "mean of 8 participants") for name in CONTRASTS]
+    fig, axes = plt.subplots(len(rows), len(columns), figsize=(3.3 * len(columns), 3.4 * len(rows) + 2.2),
                              facecolor="white", gridspec_kw=dict(wspace=0.02, hspace=0.25, left=0.07, right=0.99,
-                                                                 top=0.93, bottom=0.1))
+                                                                 top=0.86, bottom=0.24))
     for r, (name, who) in enumerate(rows):
         for c, col in enumerate(columns):
             stack = np.array(tmaps[name][col]["lh"])
-            t_lh = stack[0] if who == "participant 1" else stack.mean(0)
+            t_lh = stack.mean(0)
             rng = 8 if col.startswith("session") else 40
             draw_t(axes[r, c], geo, t_lh, rng, args.threshold, border)
-            if r == 0 or r == 2:
+            if True:
                 axes[r, c].set_title(col.replace("session", "Session ") if col.startswith("session")
                                      else TITLES[col],
                                      fontsize=10, color=INK)
@@ -202,7 +209,7 @@ def main():
     for cols, rng in [(range(n_single), 8), (range(n_single, len(columns)), 40)]:
         left, right = axes[-1, cols[0]].get_position(), axes[-1, cols[-1]].get_position()
         mid = (left.x0 + right.x1) / 2
-        cax = fig.add_axes([mid - 0.07, left.y0 - 0.025, 0.14, 0.01])
+        cax = fig.add_axes([mid - 0.07, left.y0 - 0.06, 0.14, 0.018])
         cb = fig.colorbar(plt.cm.ScalarMappable(norm=Normalize(-rng, rng), cmap=DIVERGING), cax=cax,
                           orientation="horizontal", extend="both")
         cb.outline.set_visible(False)
@@ -210,7 +217,7 @@ def main():
         cb.set_label("Welch t", fontsize=8, color=INK)
     fig.suptitle("NSD fMRI recognition memory, method of Allen et al. (2022) Fig. 4b", fontsize=14, color=INK,
                  x=0.02, ha="left")
-    fig.text(0.02, 0.045,
+    fig.text(0.02, 0.07,
              f"betas_fithrf_GLMdenoise_RR on fsaverage in percent signal change (no normalisation), correct trials. "
              f"Per participant and vertex: Welch t between trial types, for single sessions and pooled across "
              f"sessions; group = simple mean of the 8 t maps.\nShown where |t| > {args.threshold:g} (gray otherwise); "
