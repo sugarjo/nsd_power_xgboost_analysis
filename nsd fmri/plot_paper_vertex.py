@@ -190,43 +190,39 @@ def main():
     geo = load_flatmap(args.cache)
     border = geo.border
     rows = [(name, "mean of 8 participants") for name in CONTRASTS]
-    fig, axes = plt.subplots(len(rows), len(columns), figsize=(3.3 * len(columns), 3.4 * len(rows) + 2.2),
-                             facecolor="white", gridspec_kw=dict(wspace=0.02, hspace=0.25, left=0.07, right=0.99,
-                                                                 top=0.86, bottom=0.24))
+    shown = [c for c in columns if not c.startswith("session")]     # single sessions: data only, not plotted
+    fig, axes = plt.subplots(len(rows), len(shown), figsize=(4.4 * len(shown), 4.2 * len(rows) + 2.4),
+                             facecolor="white", gridspec_kw=dict(wspace=0.03, hspace=0.22, left=0.06, right=0.99,
+                                                                 top=0.86, bottom=0.25))
+    norm = Normalize(-40, 40)
     for r, (name, who) in enumerate(rows):
-        for c, col in enumerate(columns):
-            stack = np.array(tmaps[name][col]["lh"])
-            t_lh = stack.mean(0)
-            rng = 8 if col.startswith("session") else 40
-            draw_t(axes[r, c], geo, t_lh, rng, args.threshold, border)
-            if True:
-                axes[r, c].set_title(col.replace("session", "Session ") if col.startswith("session")
-                                     else TITLES[col],
-                                     fontsize=10, color=INK)
-        axes[r, 0].text(-0.06, 0.5, f"{CONTRASTS[name][0]}\n{who}", transform=axes[r, 0].transAxes, rotation=90,
-                        ha="right", va="center", fontsize=9, color=INK)
-    n_single = len(SESSIONS)
-    for cols, rng in [(range(n_single), 8), (range(n_single, len(columns)), 40)]:
-        left, right = axes[-1, cols[0]].get_position(), axes[-1, cols[-1]].get_position()
-        mid = (left.x0 + right.x1) / 2
-        cax = fig.add_axes([mid - 0.07, left.y0 - 0.06, 0.14, 0.018])
-        cb = fig.colorbar(plt.cm.ScalarMappable(norm=Normalize(-rng, rng), cmap=DIVERGING), cax=cax,
-                          orientation="horizontal", extend="both")
-        cb.outline.set_visible(False)
-        cb.ax.tick_params(labelsize=7, colors=INK_MUTED, length=0)
-        cb.set_label("Welch t", fontsize=8, color=INK)
-    fig.suptitle("NSD fMRI recognition memory, method of Allen et al. (2022) Fig. 4b", fontsize=14, color=INK,
+        for c, col in enumerate(shown):
+            draw_t(axes[r, c], geo, np.array(tmaps[name][col]["lh"]).mean(0), 40, args.threshold, border)
+            axes[r, c].set_title(TITLES[col], fontsize=11, color=INK)
+        axes[r, 0].text(-0.04, 0.5, f"{CONTRASTS[name][0]}\n{who}", transform=axes[r, 0].transAxes, rotation=90,
+                        ha="right", va="center", fontsize=10, color=INK)
+    left, right = axes[-1, 0].get_position(), axes[-1, -1].get_position()
+    mid = (left.x0 + right.x1) / 2
+    cax = fig.add_axes([mid - 0.12, left.y0 - 0.06, 0.24, 0.018])
+    cb = fig.colorbar(plt.cm.ScalarMappable(norm=norm, cmap=DIVERGING), cax=cax, orientation="horizontal",
+                      extend="both")
+    cb.outline.set_visible(False)
+    cb.ax.tick_params(labelsize=8, colors=INK_MUTED, length=0)
+    cb.set_label("Welch t (mean of 8 participants)", fontsize=9, color=INK)
+    fig.suptitle("NSD fMRI recognition memory, method of Allen et al. (2022) Fig. 4b", fontsize=15, color=INK,
                  x=0.02, ha="left")
-    fig.text(0.02, 0.07,
-             f"betas_fithrf_GLMdenoise_RR on fsaverage in percent signal change (no normalisation), correct trials. "
-             f"Per participant and vertex: Welch t between trial types, for single sessions and pooled across "
-             f"sessions; group = simple mean of the 8 t maps.\nShown where |t| > {args.threshold:g} (gray otherwise); "
-             f"flattened left hemisphere with HCP-MMP1 borders. Hits = recent + consolidated; recent: last shown "
-             f"≤ {args.hours:g} h before, consolidated: > {args.hours:g} h. Shuffled: labels shuffled within session (keeps each session's trial mix, so it shows what session-to-session drift alone produces).\n"
-             f"Session means removed: each session's mean over its correct trials subtracted per vertex before pooling."
-             + (f" Only repeats last shown ≤ {args.max_lag_days:g} days before (the sEEG lag range)."
-                if args.max_lag_days is not None else ""),
-             fontsize=8, color=INK_MUTED, va="top")
+    fig.text(0.02, 0.09,
+             "betas_fithrf_GLMdenoise_RR on fsaverage in percent signal change (no normalisation), correct trials. "
+             "Per participant and vertex: Welch t between trial types,\npooled across sessions; group = simple mean "
+             f"of the 8 t maps, shown where |t| > {args.threshold:g} (gray otherwise); flattened left hemisphere with "
+             "HCP-MMP1 borders.\n"
+             f"Hits = recent + consolidated; recent: last shown ≤ {args.hours:g} h before, consolidated: > "
+             f"{args.hours:g} h." + (f" Only repeats last shown ≤ {args.max_lag_days:g} days before (the sEEG lag "
+                                     "range)." if args.max_lag_days is not None else "") +
+             "\nSession means removed: each session's mean over its correct trials subtracted per vertex before "
+             "pooling. Shuffled: labels shuffled within session\n(keeps each session's trial mix, so it shows what "
+             "session-to-session drift alone produces).",
+             fontsize=8.5, color=INK_MUTED, va="top")
     path = args.out_dir / f"nsd_paper_vertex{window}.png"
     fig.savefig(path, dpi=200, bbox_inches="tight")
     print("wrote", path)
