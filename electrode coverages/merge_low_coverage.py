@@ -123,6 +123,35 @@ def merge_parcels(subjects: dict, adj: dict, area: dict, min_subjects: int, with
     return group, members, subj, log
 
 
+def fallback_merge(members, subj, group, parcel, faces, pial_v, min_subjects, log):
+    """Join each region still below min_subjects to a region with at least min_subjects, across groups:
+    the neighbour sharing the longest border, else (no covered neighbour) the nearest region centre."""
+    edges = np.r_[faces[:, [0, 1]], faces[:, [1, 2]], faces[:, [2, 0]]]
+    a, b = parcel[edges[:, 0]], parcel[edges[:, 1]]
+    keep = (a != b) & (a != "") & (b != "")
+    border = pd.Series(1, index=pd.MultiIndex.from_arrays([a[keep], b[keep]])).groupby(level=[0, 1]).sum()
+    centre = {g: pial_v[np.isin(parcel, members[g])].mean(0) for g in members}
+    joined = []
+    for g in sorted([g for g in members if len(subj[g]) < min_subjects], key=lambda g: len(subj[g])):
+        big = [h for h in members if h != g and len(subj[h]) >= min_subjects]
+        shared = {h: sum(border.get((p, q), 0) for p in members[g] for q in members[h]) for h in big}
+        touching = {h: n for h, n in shared.items() if n > 0}
+        if touching:
+            h, how = max(touching, key=touching.get), "longest shared border"
+        else:
+            h = min(big, key=lambda h: np.linalg.norm(centre[h] - centre[g]))
+            how = f"nearest centre ({np.linalg.norm(centre[h] - centre[g]):.0f} mm)"
+        log.append((" + ".join(members[g]), " + ".join(members[h]) + f"  [across groups, {how}]",
+                    len(subj[g] | subj[h])))
+        joined.append((" + ".join(members[g]), " + ".join(members[h]), how))
+        for p in members[g]:
+            group[p] = h
+        members[h] += members.pop(g)
+        subj[h] |= subj.pop(g)
+        centre.pop(g)
+    return joined
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--pkl", type=Path, default=REPO / "random_data_bipolar_xgboost_3w.pkl")
@@ -135,6 +164,9 @@ def main():
                     help='only merge parcels of the same group in this column of --labels, e.g. "Regions ROIs"')
     ap.add_argument("--labels", type=Path, default=HERE / "HPC_MMP1_Labels.xlsx",
                     help="parcel table with a Label column (used with --within)")
+    ap.add_argument("--fallback", action="store_true",
+                    help="afterwards join regions still below --min-subjects to a region with enough subjects, "
+                         "across groups (longest shared border, else nearest centre)")
     args = ap.parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -168,6 +200,9 @@ def main():
             print(f"no {args.within!r} for {unknown}; these are never merged")
         adj = bridge_uncovered(adj, set(subjects), within)
     group, members, subj, log = merge_parcels(subjects, adj, area, args.min_subjects, within)
+    joined = []
+    if args.fallback:
+        joined = fallback_merge(members, subj, group, parcel, faces, pial_v, args.min_subjects, log)
     name = {g: "+".join(m) for g, m in members.items()}
 
     rows = [dict(parcel=p, region=name[group[p]], n_subjects_parcel=len(subjects[p]),
@@ -180,7 +215,7 @@ def main():
         table.insert(1, args.within, table["parcel"].map(lambda p: within.get(p, within.get(p.split("-")[0]))))
     suffix = ("" if args.min_subjects == 3 else f"_min{args.min_subjects}") + \
         (f"_within_{args.within.replace(' ', '')}" if args.within else "") + \
-        "".join(f"_without_{e}" for e in args.exclude)
+        ("_fallback" if args.fallback else "") + "".join(f"_without_{e}" for e in args.exclude)
     table.to_csv(args.out_dir / f"merged_regions{suffix}.csv", index=False)
 
     n_low_before = sum(len(s) < args.min_subjects for s in subjects.values())
@@ -251,7 +286,7 @@ def main():
         key_low.add_patch(plt.Rectangle((0, 0.1), 0.08, 0.8, facecolor=LOW, edgecolor="none"))
         key_low.text(0.11, 0.5, f"Still below {args.min_subjects} subjects", fontsize=8, color=INK, va="center")
     fig.suptitle(f"Electrode coverage after merging parcels with fewer than {args.min_subjects} subjects"
-                 + (f" (only within {args.within})" if args.within else ""),
+                 + ((f" (within {args.within}, then remaining regions joined across groups)" if joined else f" (only within {args.within})") if args.within else ""),
                  fontsize=13, color=INK, x=0.02, ha="left")
     add_colorbar(fig, fig.add_axes([0.25 if numbered else 0.35, 0.1, 0.3 if not numbered else 0.22, 0.02]), cmap, norm, vmax)
     fig.text(0.02, 0.035,
@@ -260,8 +295,11 @@ def main():
              f"Dark lines: borders between regions after merging.\n"
              + (f"Parcels only merged with neighbours in the same {args.within} group ({args.labels.name}); "
                 f"parcels of a group separated only by uncovered parcels of that group count as neighbours.\n"
-                f"{len(still_low)} regions have no such neighbour left and stay below {args.min_subjects} "
-                "(orange).\n" if args.within else "") +
+                + (f"{len(still_low)} regions have no such neighbour left and stay below {args.min_subjects} "
+                 "(orange).\n" if not joined else
+                 f"Then joined across groups to a region with ≥ {args.min_subjects} subjects (longest shared border, "
+                 "else nearest centre): " + "; ".join(f"{a} → {b}" for a, b, _ in joined) + ".\n")
+                if args.within else "") +
              "A merged region counts every subject with data in any of its parcels. Gray: no coverage. "
              + (f"Excluded: {', '.join(args.exclude)} ({len(cov)} subjects). " if args.exclude else "") +
              "Hemispheres pooled, shown on the left fsaverage hemisphere.",

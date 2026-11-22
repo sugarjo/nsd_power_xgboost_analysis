@@ -59,7 +59,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--pkl", type=Path, default=REPO / "random_data_bipolar_xgboost_3w.pkl")
     ap.add_argument("--merged", type=Path, default=REPO / "electrode coverages" / "figures" /
-                    "merged_regions_min4_within_RegionsROIs.csv")
+                    "merged_regions_min4_within_RegionsROIs_fallback.csv")
     ap.add_argument("--exclude", nargs="+", default=["CNP21"])
     ap.add_argument("--alpha", type=float, default=0.05)
     ap.add_argument("--n-perm", type=int, default=1000)
