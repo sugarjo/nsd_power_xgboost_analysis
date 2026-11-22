@@ -65,7 +65,9 @@ def map_grid(geo, panel_values, titles, norm, cbar_label, min_subjects, title, f
     nrows = -(-n // ncols)
     height = 4.4 * nrows + 1.0            # 1 inch below the maps for colour bar and key
     bottom = 1.0 / height
-    fig, axes = plt.subplots(nrows, ncols, figsize=(6.2 * ncols, height), facecolor="white", squeeze=False,
+    single = n == 1
+    fig, axes = plt.subplots(nrows, ncols, figsize=(8.5 if single else 6.2 * ncols, height), facecolor="white",
+                             squeeze=False,
                              gridspec_kw=dict(wspace=0.04, hspace=0.12, left=0.02, right=0.98,
                                               top=1 - 0.8 / height, bottom=bottom))
     for ax in axes.ravel()[n:]:
@@ -74,19 +76,24 @@ def map_grid(geo, panel_values, titles, norm, cbar_label, min_subjects, title, f
         draw_region_map(ax, geo, values, norm, n_labels=n_labels, inset_labels=i == 0, regions=regions)
         ax.set_title(f"{chr(65 + i)}   {text}", fontsize=11, color=INK, loc="left")
 
-    cax = fig.add_axes([0.55, 0.55 * bottom, 0.3, 0.15 * bottom])
+    cax = fig.add_axes([0.58, 0.55 * bottom, 0.36, 0.15 * bottom] if single else
+                       [0.55, 0.55 * bottom, 0.3, 0.15 * bottom])
     cb = fig.colorbar(plt.cm.ScalarMappable(norm=norm, cmap=DIVERGING), cax=cax,
                       orientation="horizontal", extend="both")
     cb.outline.set_visible(False)
     cb.ax.xaxis.set_major_locator(plt.MaxNLocator(5, symmetric=True))
     cb.ax.tick_params(labelsize=8, colors=INK_MUTED, length=0)
     cb.set_label(cbar_label, fontsize=9, color=INK)
-    key = fig.add_axes([0.2, 0.55 * bottom, 0.25, 0.15 * bottom])
+    key = fig.add_axes([0.04, 0.55 * bottom, 0.45, 0.15 * bottom] if single else
+                       [0.2, 0.55 * bottom, 0.25, 0.15 * bottom])
     key.set_xlim(0, 1); key.set_ylim(0, 1); key.axis("off")
     key.add_patch(plt.Rectangle((0, 0), 0.06, 1, facecolor=NO_DATA_GYRUS, edgecolor=AXIS, lw=0.5))
     key.text(0.09, 0.5, f"No electrodes or fewer than {min_subjects} subjects", fontsize=9, color=INK, va="center")
 
     fig.suptitle(title, fontsize=14, color=INK, x=0.02, y=1 - 0.15 / height, ha="left", va="top")
+    if single:                                    # keep the footer as wide as the single map
+        import textwrap
+        footer = "\n".join(textwrap.fill(line, 135) for line in footer.split("\n"))
     fig.text(0.02, -0.02 * bottom, footer, fontsize=8, color=INK_MUTED, va="top")
     return fig
 
