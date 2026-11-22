@@ -269,7 +269,7 @@ def style_axis(ax):
 
 
 def band_second_panel(ax, subj: pd.DataFrame, stats: pd.DataFrame, norm, cmap=DIVERGING,
-                      ylabel="Net signed SHAP (log-odds)", q=None, fdr=0.05):
+                      ylabel="Net signed SHAP (log-odds)", q=None, fdr=0.05, whiskers=True):
     """One bar per band x second: the two seconds of a band side by side.
 
     Bars carry the map's colormap (value), so the second is told by position
@@ -283,8 +283,9 @@ def band_second_panel(ax, subj: pd.DataFrame, stats: pd.DataFrame, norm, cmap=DI
     x = np.array(x)
     s = stats.loc[ticks]
     ax.bar(x, s["mean"], width=width, color=cmap(norm(s["mean"].to_numpy(float))), zorder=2)
-    ax.errorbar(x, s["mean"], yerr=[s["mean"] - s["ci_low"], s["ci_high"] - s["mean"]],
-                fmt="none", ecolor=INK, elinewidth=1.2, capsize=2.5, zorder=4)
+    if whiskers:
+        ax.errorbar(x, s["mean"], yerr=[s["mean"] - s["ci_low"], s["ci_high"] - s["mean"]],
+                    fmt="none", ecolor=INK, elinewidth=1.2, capsize=2.5, zorder=4)
     rng = np.random.default_rng(1)
     for xi, key in zip(x, ticks):
         v = subj[key].dropna()
@@ -320,6 +321,7 @@ def main():
                     help="signed: net push towards the correct label; abs: |new vs repeated| importance")
     ap.add_argument("--merged", type=Path, nargs="?", const=REPO / "electrode coverages" / "figures" / "merged_regions.csv",
                     help="parcel -> merged region table (merge_low_coverage.py); SHAP is summed within merged regions")
+    ap.add_argument("--no-stats", action="store_true", help="bars and subject dots only: no CI whiskers, no stars")
     ap.add_argument("--fdr", type=float, default=0.05, help="FDR level for the band x second tests (signed measure)")
     ap.add_argument("--contrast", choices=list(CONTRASTS), default="new_vs_repeated")
     ap.add_argument("--exclude", nargs="+", default=[], metavar="SUBJECT", help="subjects left out")
@@ -401,7 +403,7 @@ def main():
     band_second_panel(fig.add_subplot(gs[1]), subj["band_second"], stats["band_second"],
                       Normalize(0, bar_max) if absolute else TwoSlopeNorm(0, -bar_max, bar_max), cmap,
                       f"Mean |SHAP {C['short']}| (log-odds)" if absolute else "Net signed SHAP (log-odds)",
-                      q, args.fdr)
+                      None if args.no_stats else q, args.fdr, whiskers=not args.no_stats)
 
     n_subj = len(subj["band"])
     fig.suptitle(f"How strongly each region, band and second drives the {C['title']} decision"
@@ -421,11 +423,12 @@ def main():
              f"({len(region) - len(shown)} with fewer shown dark gray); top 6 by |value| named; "
              +
              f"colour scale clipped at {'' if absolute else '±'}{vmax:.3f} (98th percentile of |value|).\n"
-             f"B: per band and second; map colormap on its own scale ({'0–' if absolute else '±'}{bar_max:.3f}); bars = mean over subjects, whiskers = 95% bootstrap CI over subjects, dots = subjects"
-             + ("." if absolute else f";\n   stars: mean > 0, one-sided one-sample t-test over subjects, Benjamini-Hochberg "
+             f"B: per band and second; map colormap on its own scale ({'0–' if absolute else '±'}{bar_max:.3f}); bars = mean over subjects, "
+             + ("dots = subjects." if args.no_stats else "whiskers = 95% bootstrap CI over subjects, dots = subjects")
+             + ("" if args.no_stats else "." if absolute else f";\n   stars: mean > 0, one-sided one-sample t-test over subjects, Benjamini-Hochberg "
                                      f"FDR across the 14 bars (* q < {args.fdr:g}, ** q < 0.01, *** q < 0.001)."),
              fontsize=7.5, color=INK_MUTED)
-    path = args.out_dir / f"{prefix}_contributions{suffix}.png"
+    path = args.out_dir / f"{prefix}_contributions{suffix}{'_nostats' if args.no_stats else ''}.png"
     fig.savefig(path, dpi=200, bbox_inches="tight")
     print("wrote", path)
 
