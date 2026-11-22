@@ -38,6 +38,8 @@ def main():
     ap.add_argument("--pkl", type=Path, default=REPO / "random_data_bipolar_xgboost_3w.pkl")
     ap.add_argument("--regions", nargs="+", required=True, help="region names as in the merged table / maps")
     ap.add_argument("--contrasts", nargs="+", choices=list(CONTRASTS), default=list(CONTRASTS))
+    ap.add_argument("--combine", action="store_true",
+                    help="collapse all --regions into one region (SHAP summed over them per trial)")
     ap.add_argument("--merged", type=Path, default=REPO / "electrode coverages" / "figures" /
                     "merged_regions_min4_within_RegionsROIs_fallback.csv")
     ap.add_argument("--out-dir", type=Path, default=HERE / "figures")
@@ -49,22 +51,33 @@ def main():
     for c in args.contrasts:
         out = signed_shap(data, c)
         values, missing, _ = merge_regions(out["signed"], out["missing"], args.merged)
+        if args.combine:                          # one region: summed over the listed regions per trial
+            combined = " + ".join(args.regions)
+            rename = lambda cols: pd.MultiIndex.from_arrays(
+                [[combined if r in args.regions else r for r in cols.get_level_values(0)],
+                 cols.get_level_values(1), cols.get_level_values(2)], names=cols.names)
+            values = values.set_axis(rename(values.columns), axis=1)
+            missing = missing.set_axis(rename(missing.columns), axis=1)
         s = subject_means(values, missing, lv, weights=CONTRASTS[c]["weights"])
-        unknown = [r for r in args.regions if r not in s.columns.get_level_values("region")]
+        wanted = [" + ".join(args.regions)] if args.combine else args.regions
+        unknown = [r for r in wanted if r not in s.columns.get_level_values("region")]
         if unknown:
             raise SystemExit(f"unknown region(s) {unknown}; e.g. {sorted(set(s.columns.get_level_values('region')))[:20]}")
-        subj[c] = s.loc[:, s.columns.get_level_values("region").isin(args.regions)]
+        subj[c] = s.loc[:, s.columns.get_level_values("region").isin(wanted)]
+    regions_shown = wanted
 
     vmax = max(np.nanmax(np.abs(s.mean().to_numpy(float))) for s in subj.values())
     norm = TwoSlopeNorm(0, -vmax, vmax)
     lo = min(np.nanmin(s.to_numpy(float)) for s in subj.values())
     hi = max(np.nanmax(s.to_numpy(float)) for s in subj.values())
     pad = 0.06 * (hi - lo)
-    nr, nc = len(args.regions), len(args.contrasts)
-    fig, axes = plt.subplots(nr, nc, figsize=(7.2 * nc, 3.4 * nr + 1.0), facecolor="white", squeeze=False,
-                             gridspec_kw=dict(hspace=0.55, wspace=0.12))
+    nr, nc = len(regions_shown), len(args.contrasts)
+    height = 3.4 * nr + 1.8
+    fig, axes = plt.subplots(nr, nc, figsize=(max(7.2 * nc, 9), height), facecolor="white", squeeze=False,
+                             gridspec_kw=dict(hspace=0.55, wspace=0.12, top=1 - 0.75 / height,
+                                              bottom=1.35 / height, left=0.08, right=0.98))
     rows = []
-    for i, region in enumerate(args.regions):
+    for i, region in enumerate(regions_shown):
         for j, c in enumerate(args.contrasts):
             s = subj[c].xs(region, axis=1, level="region").dropna(how="all")
             stats = pd.DataFrame({"mean": s.mean()})
@@ -76,14 +89,19 @@ def main():
                          loc="left")
             rows.append(s.stack(level=["band", "second"], future_stack=True).rename("value").reset_index()
                         .assign(contrast=c, region=region))
-    fig.suptitle("Signed SHAP by band and second, selected regions", fontsize=13, color=INK, x=0.07, ha="left")
-    fig.text(0.07, 0.01,
+    fig.suptitle("Signed SHAP by band and second" + (", regions combined" if args.combine else ", selected regions"),
+                 fontsize=13, color=INK, x=0.02, ha="left", y=1 - 0.12 / height)
+    import textwrap
+    footer = (
              "Per trial the signed contrast (> 0 helps the correct call) of the region's features, SHAP summed over the "
              "parcels of a merged region; averaged within subject with balanced trial-type weights\n"
              "(new vs repeated: new, recent, old 1/2, 1/4, 1/4; recent vs consolidated: 1/2, 1/2), then across the "
-             f"subjects with the region. Bars = mean, dots = subjects. Regions: {args.merged.name}.",
-             fontsize=8, color=INK_MUTED, va="top")
-    tag = "_".join(re.sub(r"[^A-Za-z0-9]+", "", r) for r in args.regions)
+             f"subjects with the region. Bars = mean, dots = subjects. Regions: {args.merged.name}."
+              + (" Combined: SHAP summed over the listed regions per trial; a subject counts if it has any of them."
+                 if args.combine else ""))
+    footer = "\n".join(textwrap.fill(line, 150 if nc > 1 else 125) for line in footer.replace("\n", " ").split("\n"))
+    fig.text(0.02, 0.45 / height, footer, fontsize=8, color=INK_MUTED, va="top")
+    tag = ("combined_" if args.combine else "") + "_".join(re.sub(r"[^A-Za-z0-9]+", "", r) for r in args.regions)
     pd.concat(rows).to_csv(args.out_dir / f"timefreq_{tag}.csv", index=False)
     path = args.out_dir / f"timefreq_{tag}.png"
     fig.savefig(path, dpi=200, bbox_inches="tight")
