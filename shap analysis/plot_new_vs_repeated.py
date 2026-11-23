@@ -470,12 +470,14 @@ def main():
              f"{len(shown)} regions with ≥{args.min_subjects} subjects "
              f"({len(region) - len(shown)} with fewer shown dark gray); {named_txt}; "
              +
-             (f"colour scale fixed at {'' if absolute else '±'}{vmax:.3f} (as in the correct-trial figure).\n"
+             (f"colour scale fixed at {'' if absolute else '±'}{vmax:.3f} (shared with the matching correct/error-trial figure).\n"
               if args.vmax_value else
               f"colour scale up to {'' if absolute else '±'}{vmax:.3f} (largest |value| on the flatmap).\n"
               if args.vmax == "max" else
               f"colour scale clipped at {'' if absolute else '±'}{vmax:.3f} (98th percentile of |value|).\n") +
-             f"B: per band and second; map colormap on its own scale ({'0–' if absolute else '±'}{bar_max:.3f}{', fixed as for correct trials' if args.bar_max else ''}); bars = mean over subjects, "
+             (f"B: per band and second; bars coloured on the map's scale ({'0–' if absolute else '±'}{bar_max:.3f}); bars = mean over subjects, "
+              if args.bar_max and abs(args.bar_max - vmax) < 1e-12 else
+              f"B: per band and second; map colormap on its own scale ({'0–' if absolute else '±'}{bar_max:.3f}{', fixed' if args.bar_max else ''}); bars = mean over subjects, ")
              + ("dots = subjects." if args.no_stats else "whiskers = 95% bootstrap CI over subjects, dots = subjects")
              + ("" if args.no_stats else "." if absolute else f";\n   stars: mean > 0, one-sided one-sample t-test over subjects, Benjamini-Hochberg "
                                      f"FDR across the 14 bars (* q < {args.fdr:g}, ** q < 0.01, *** q < 0.001)."),
