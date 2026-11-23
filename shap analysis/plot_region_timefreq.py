@@ -40,6 +40,8 @@ def main():
     ap.add_argument("--contrasts", nargs="+", choices=list(CONTRASTS), default=list(CONTRASTS))
     ap.add_argument("--combine", action="store_true",
                     help="collapse all --regions into one region (SHAP summed over them per trial)")
+    ap.add_argument("--parcel-mean", action="store_true",
+                    help="per trial, average SHAP over the original HCP-MMP1 parcels the patient has (instead of the sum)")
     ap.add_argument("--merged", type=Path, default=REPO / "electrode coverages" / "figures" /
                     "merged_regions_min4_within_RegionsROIs_fallback.csv")
     ap.add_argument("--out-dir", type=Path, default=HERE / "figures")
@@ -50,8 +52,24 @@ def main():
     subj = {}
     for c in args.contrasts:
         out = signed_shap(data, c)
-        values, missing, _ = merge_regions(out["signed"], out["missing"], args.merged)
-        if args.combine:                          # one region: summed over the listed regions per trial
+        if args.parcel_mean:
+            # per trial and band x second: mean over the parcels (with data) of each shown region
+            parcel_of = pd.read_csv(args.merged, dtype=str).set_index("parcel")["region"].to_dict()
+            groups = [" + ".join(args.regions)] if args.combine else args.regions
+            frames, misses = [], []
+            for g in groups:
+                members = args.regions if args.combine else [g]
+                parcels = [p for p, r in parcel_of.items() if r in members] or members
+                cols = out["signed"].columns.get_level_values("region").isin(parcels)
+                v = out["signed"].loc[:, cols].where(~out["missing"].loc[:, cols].to_numpy())
+                m = v.T.groupby(level=["band", "second"]).mean().T          # NaN-skipping mean over parcels
+                m.columns = pd.MultiIndex.from_tuples([(g, b, sec) for b, sec in m.columns], names=lv)
+                frames.append(m)
+                misses.append(m.isna())
+            values, missing = pd.concat(frames, axis=1), pd.concat(misses, axis=1)
+        else:
+            values, missing, _ = merge_regions(out["signed"], out["missing"], args.merged)
+        if args.combine and not args.parcel_mean:  # one region: summed over the listed regions per trial
             combined = " + ".join(args.regions)
             rename = lambda cols: pd.MultiIndex.from_arrays(
                 [[combined if r in args.regions else r for r in cols.get_level_values(0)],
@@ -89,19 +107,23 @@ def main():
                          loc="left")
             rows.append(s.stack(level=["band", "second"], future_stack=True).rename("value").reset_index()
                         .assign(contrast=c, region=region))
-    fig.suptitle("Signed SHAP by band and second" + (", regions combined" if args.combine else ", selected regions"),
+    fig.suptitle("Signed SHAP by band and second" + (", regions combined" if args.combine else ", selected regions")
+                 + (", mean per parcel" if args.parcel_mean else ""),
                  fontsize=13, color=INK, x=0.02, ha="left", y=1 - 0.12 / height)
     import textwrap
     footer = (
-             "Per trial the signed contrast (> 0 helps the correct call) of the region's features, SHAP summed over the "
-             "parcels of a merged region; averaged within subject with balanced trial-type weights\n"
+             "Per trial the signed contrast (> 0 helps the correct call) of the region's features, "
+             + ("SHAP averaged over the original HCP-MMP1 parcels the subject has (per band and second), so the value "
+                "does not grow with the number of parcels covered; " if args.parcel_mean else
+                "SHAP summed over the parcels of a merged region; ")
+             + "averaged within subject with balanced trial-type weights\n"
              "(new vs repeated: new, recent, old 1/2, 1/4, 1/4; recent vs consolidated: 1/2, 1/2), then across the "
              f"subjects with the region. Bars = mean, dots = subjects. Regions: {args.merged.name}."
-              + (" Combined: SHAP summed over the listed regions per trial; a subject counts if it has any of them."
+              + (" Combined: the listed regions taken together; a subject counts if it has any of them."
                  if args.combine else ""))
     footer = "\n".join(textwrap.fill(line, 150 if nc > 1 else 125) for line in footer.replace("\n", " ").split("\n"))
     fig.text(0.02, 0.45 / height, footer, fontsize=8, color=INK_MUTED, va="top")
-    tag = ("combined_" if args.combine else "") + "_".join(re.sub(r"[^A-Za-z0-9]+", "", r) for r in args.regions)
+    tag = ("combined_" if args.combine else "") + ("parcelmean_" if args.parcel_mean else "") + "_".join(re.sub(r"[^A-Za-z0-9]+", "", r) for r in args.regions)
     pd.concat(rows).to_csv(args.out_dir / f"timefreq_{tag}.csv", index=False)
     path = args.out_dir / f"timefreq_{tag}.png"
     fig.savefig(path, dpi=200, bbox_inches="tight")
