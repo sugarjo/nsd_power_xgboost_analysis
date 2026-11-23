@@ -77,6 +77,7 @@ def main():
                     "merged_regions_min4_within_RegionsROIs_fallback.csv")
     ap.add_argument("--cache", type=Path, default=REPO / "data" / "fsaverage")
     ap.add_argument("--out-dir", type=Path, default=HERE / "output")
+    ap.add_argument("--vmax", type=int, help="top of the colour scale (default: the largest coverage of any region)")
     ap.add_argument("--dpi", type=int, default=600, help="resolution of the embedded brain images")
     args = ap.parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)
@@ -91,7 +92,7 @@ def main():
 
     cov = load_coverage(args.pkl)                        # patient x region, bool
     n_pat = cov.sum()
-    vmax = len(cov)
+    vmax = args.vmax or int(n_pat.max())
     cmap = ListedColormap(BLUES[:1] + list(np.array(BLUES)[np.linspace(1, len(BLUES) - 1, vmax - 1)
                                                          .round().astype(int)]))
     norm = BoundaryNorm(np.arange(0.5, vmax + 1), cmap.N)
@@ -173,7 +174,7 @@ def main():
     # colour bar and key
     cax = fig.add_axes([0.04, 0.215, 0.3, 0.012])
     cb = fig.colorbar(plt.cm.ScalarMappable(norm=norm, cmap=cmap), cax=cax, orientation="horizontal")
-    cb.set_ticks(np.arange(1, vmax + 1, 2))
+    cb.set_ticks(np.arange(1, vmax + 1, 1 if vmax <= 12 else 2))
     cb.outline.set_visible(False)
     cb.ax.tick_params(labelsize=6, colors=INK_MUTED, length=0)
     cb.set_label("Patients with a bipolar channel", fontsize=7, color=INK)
