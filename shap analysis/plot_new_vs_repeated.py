@@ -427,6 +427,9 @@ def main():
                       None if args.no_stats else q, args.fdr, whiskers=not args.no_stats)
 
     n_subj = len(subj["band"])
+    named_txt = ((f"top {args.n_labels} by |value| named"
+                  + (" (hippocampus and amygdala included in the ranking)" if args.rank_subcortical else ""))
+                 if args.n_labels else "no regions named")
     fig.suptitle(f"How strongly each region, band and second drives the {C['title']} decision"
                  if absolute else f"What drives the model's {C['title']} decision"
                  + (" on error trials" if args.trials == "error" else ""),
@@ -444,7 +447,7 @@ def main():
              (f"A: low-coverage parcels merged with neighbours as in {args.merged.name}, "
               f"SHAP summed within each merged region;\n   " if regions else "A: ") +
              f"{len(shown)} regions with ≥{args.min_subjects} subjects "
-             f"({len(region) - len(shown)} with fewer shown dark gray); {(f"top {args.n_labels} by |value| named" + (' (hippocampus and amygdala included in the ranking)' if args.rank_subcortical else '')) if args.n_labels else 'no regions named'}; "
+             f"({len(region) - len(shown)} with fewer shown dark gray); {named_txt}; "
              +
              (f"colour scale fixed at {'' if absolute else '±'}{vmax:.3f} (as in the correct-trial figure).\n"
               if args.vmax_value else
