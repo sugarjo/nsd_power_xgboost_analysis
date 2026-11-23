@@ -332,6 +332,7 @@ def main():
     ap.add_argument("--trials", choices=["test", "error"], default="test",
                     help="test set (correct responses) or the error trials")
     ap.add_argument("--vmax-value", type=float, help="fixed map colour scale (e.g. from the correct-trial figure)")
+    ap.add_argument("--bar-ylim", type=float, nargs=2, help="fixed y range of the band x second panel")
     ap.add_argument("--bar-max", type=float, help="fixed colour scale of the band x second bars")
     ap.add_argument("--rank-subcortical", action="store_true",
                     help="hippocampus/amygdala are named only if they are among the --n-labels largest |values|")
@@ -440,10 +441,13 @@ def main():
         bs.to_csv(args.out_dir / f"{prefix}{suffix}_band_second.csv")
         q = bs["q_greater"]
         print(bs[["mean", "p_greater", "q_greater", "n_subjects"]].round(5).to_string())
-    band_second_panel(fig.add_subplot(gs[1]), subj["band_second"], stats["band_second"],
+    ax_b = fig.add_subplot(gs[1])
+    band_second_panel(ax_b, subj["band_second"], stats["band_second"],
                       Normalize(0, bar_max) if absolute else TwoSlopeNorm(0, -bar_max, bar_max), cmap,
                       f"Mean |SHAP {C['short']}| (log-odds)" if absolute else "Net signed SHAP (log-odds)",
                       None if args.no_stats else q, args.fdr, whiskers=not args.no_stats)
+    if args.bar_ylim:
+        ax_b.set_ylim(*args.bar_ylim)
 
     n_subj = len(subj["band"])
     named_txt = ((f"top {args.n_labels} by |value| named"

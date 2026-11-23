@@ -127,7 +127,8 @@ def main():
                  if args.combine else ""))
     footer = "\n".join(textwrap.fill(line, 150 if nc > 1 else 125) for line in footer.replace("\n", " ").split("\n"))
     fig.text(0.02, 0.45 / height, footer, fontsize=8, color=INK_MUTED, va="top")
-    tag = ("errors_" if args.trials == "error" else "") + ("combined_" if args.combine else "") + ("parcelmean_" if args.parcel_mean else "") + "_".join(re.sub(r"[^A-Za-z0-9]+", "", r) for r in args.regions)
+    tag = ("recent_vs_consolidated_" if args.contrasts == ["recent_vs_consolidated"] else "") + \
+        ("errors_" if args.trials == "error" else "") + ("combined_" if args.combine else "") + ("parcelmean_" if args.parcel_mean else "") + "_".join(re.sub(r"[^A-Za-z0-9]+", "", r) for r in args.regions)
     pd.concat(rows).to_csv(args.out_dir / f"timefreq_{tag}.csv", index=False)
     path = args.out_dir / f"timefreq_{tag}.png"
     fig.savefig(path, dpi=200, bbox_inches="tight")
