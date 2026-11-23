@@ -205,6 +205,8 @@ def draw_glass_brain(ax, pial_v, faces, ghost_rgb, meshes, colors, view, labels=
         names = sorted(meshes, key=lambda n: meshes[n][0].mean(0) @ right)
         x_text = np.linspace(*np.percentile(xy[:, 0], [4, 96]), len(names))
         for name, xt in zip(names, x_text):
+            if name not in labels:                   # only the structures given a label are named
+                continue
             c = meshes[name][0].mean(0)
             ax.annotate(labels[name], (c @ right, c @ up), xytext=(xt, y_text), ha="center", va="top",
                         fontsize=8, color=INK, annotation_clip=False,

@@ -180,7 +180,7 @@ def fdr_bh(p: pd.Series) -> pd.Series:
 
 
 def draw_region_map(ax, geo, values: pd.Series, norm, n_labels=0, inset_labels=True, cmap=DIVERGING,
-                    regions: dict | None = None):
+                    regions: dict | None = None, rank_outside=False):
     """Colour HCP-MMP1 parcels by value; regions outside the atlas go in an inset.
 
     values: region -> value, only for the regions to show (others dark gray).
@@ -223,7 +223,12 @@ def draw_region_map(ax, geo, values: pd.Series, norm, n_labels=0, inset_labels=T
         return sum(max(0, min(box.x1, b.x1) - max(box.x0, b.x0)) * max(0, min(box.y1, b.y1) - max(box.y0, b.y0))
                    for b in placed)
 
-    for r in cortical.abs().nlargest(n_labels).index:
+    # rank_outside: the n_labels largest |values| over all regions (cortex and the inset) are
+    # named; otherwise n_labels on the cortex and every inset structure.
+    top = set(values.abs().nlargest(n_labels).index) if rank_outside else set(cortical.abs().nlargest(n_labels).index)
+    for r in cortical.abs().sort_values(ascending=False).index:
+        if r not in top:
+            continue
         pts = geo.patch_xy[largest_piece(region_of[vno] == r, geo.patch_faces)]
         xy = pts[np.argmin(((pts - pts.mean(0)) ** 2).sum(1))]   # a vertex inside the piece
         best = None
@@ -252,7 +257,9 @@ def draw_region_map(ax, geo, values: pd.Series, norm, n_labels=0, inset_labels=T
         colors = {r: np.array(cmap(norm(outside[r]))[:3]) for r in subcortical}
         sub = ax.inset_axes([-0.04, 0.0, 0.34, 0.38])
         draw_glass_brain(sub, geo.pial_v, geo.faces, ghost, {r: geo.meshes[r] for r in subcortical},
-                         colors, "Ventral", {r: r.replace("Hippocampus-", "HC\n") for r in subcortical} if inset_labels else None)
+                         colors, "Ventral",
+                         {r: r.replace("Hippocampus-", "HC\n") for r in subcortical if not rank_outside or r in top}
+                         if inset_labels else None)
         if inset_labels:
             sub.set_title("Outside HCP-MMP1 (ventral view)", fontsize=7, color=INK_MUTED, pad=2)
 
@@ -321,6 +328,12 @@ def main():
                     help="signed: net push towards the correct label; abs: |new vs repeated| importance")
     ap.add_argument("--merged", type=Path, nargs="?", const=REPO / "electrode coverages" / "figures" / "merged_regions.csv",
                     help="parcel -> merged region table (merge_low_coverage.py); SHAP is summed within merged regions")
+    ap.add_argument("--n-labels", type=int, default=6, help="regions named on the map")
+    ap.add_argument("--rank-subcortical", action="store_true",
+                    help="hippocampus/amygdala are named only if they are among the --n-labels largest |values|")
+    ap.add_argument("--vmax", choices=["p98", "max"], default="p98",
+                    help="colour scale: 98th percentile of |value| (clipped) or the flatmap's largest |value|")
+    ap.add_argument("--svg", action="store_true", help="also write SVG and PDF (meshes embedded at 600 dpi)")
     ap.add_argument("--no-stats", action="store_true", help="bars and subject dots only: no CI whiskers, no stars")
     ap.add_argument("--fdr", type=float, default=0.05, help="FDR level for the band x second tests (signed measure)")
     ap.add_argument("--contrast", choices=list(CONTRASTS), default="new_vs_repeated")
@@ -360,7 +373,8 @@ def main():
     geo = load_flatmap(args.cache)
     # 98th percentile of |mean| so a single region does not wash out the rest;
     # the colour bar marks the clipped ends.
-    vmax = np.percentile(np.abs(shown["mean"]), 98)
+    cortical_shown = shown["mean"][~shown.index.isin(list(ASEG_LABELS))]
+    vmax = (np.abs(cortical_shown).max() if args.vmax == "max" else np.percentile(np.abs(shown["mean"]), 98))
     cmap = SEQUENTIAL if absolute else DIVERGING
     norm = Normalize(0, vmax) if absolute else TwoSlopeNorm(0, -vmax, vmax)
 
@@ -369,7 +383,8 @@ def main():
                           left=0.07, right=0.98, top=0.93, bottom=0.1)
 
     ax = fig.add_subplot(gs[0])
-    draw_region_map(ax, geo, shown["mean"], norm, n_labels=6, cmap=cmap, regions=regions)
+    draw_region_map(ax, geo, shown["mean"], norm, n_labels=args.n_labels, cmap=cmap, regions=regions,
+                    rank_outside=args.rank_subcortical)
     ax.set_title("A   Regions" + (", low-coverage parcels merged" if regions else "")
                  + " (flatmap, left hemisphere; hemispheres pooled)",
                  fontsize=10, color=INK, loc="left")
@@ -420,9 +435,11 @@ def main():
              (f"A: low-coverage parcels merged with neighbours as in {args.merged.name}, "
               f"SHAP summed within each merged region;\n   " if regions else "A: ") +
              f"{len(shown)} regions with ≥{args.min_subjects} subjects "
-             f"({len(region) - len(shown)} with fewer shown dark gray); top 6 by |value| named; "
+             f"({len(region) - len(shown)} with fewer shown dark gray); top {args.n_labels} by |value| named{' (hippocampus and amygdala included in the ranking)' if args.rank_subcortical else ''}; "
              +
-             f"colour scale clipped at {'' if absolute else '±'}{vmax:.3f} (98th percentile of |value|).\n"
+             (f"colour scale up to {'' if absolute else '±'}{vmax:.3f} (largest |value| on the flatmap).\n"
+              if args.vmax == "max" else
+              f"colour scale clipped at {'' if absolute else '±'}{vmax:.3f} (98th percentile of |value|).\n") +
              f"B: per band and second; map colormap on its own scale ({'0–' if absolute else '±'}{bar_max:.3f}); bars = mean over subjects, "
              + ("dots = subjects." if args.no_stats else "whiskers = 95% bootstrap CI over subjects, dots = subjects")
              + ("" if args.no_stats else "." if absolute else f";\n   stars: mean > 0, one-sided one-sample t-test over subjects, Benjamini-Hochberg "
@@ -431,6 +448,16 @@ def main():
     path = args.out_dir / f"{prefix}_contributions{suffix}{'_nostats' if args.no_stats else ''}.png"
     fig.savefig(path, dpi=200, bbox_inches="tight")
     print("wrote", path)
+    if args.svg:                  # vector text and lines; the cortical / subcortical meshes as 600 dpi images
+        from matplotlib.collections import PolyCollection
+        plt.rcParams.update({"svg.fonttype": "none", "pdf.fonttype": 42})
+        for a in fig.get_axes():
+            for c in a.collections:
+                if isinstance(c, PolyCollection) and len(c.get_paths()) > 1000:
+                    c.set_rasterized(True)
+        for ext in ("svg", "pdf"):
+            fig.savefig(path.with_suffix(f".{ext}"), dpi=600, bbox_inches="tight")
+        print("wrote", path.with_suffix(".svg"), "and .pdf")
 
 
 if __name__ == "__main__":
