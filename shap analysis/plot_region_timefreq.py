@@ -105,6 +105,9 @@ def main():
     pd.concat(rows).to_csv(args.out_dir / f"timefreq_{tag}.csv", index=False)
     path = args.out_dir / f"timefreq_{tag}.png"
     fig.savefig(path, dpi=200, bbox_inches="tight")
+    plt.rcParams.update({"svg.fonttype": "none", "pdf.fonttype": 42})
+    for ext in ("svg", "pdf"):
+        fig.savefig(path.with_suffix(f".{ext}"), bbox_inches="tight")
     print("wrote", path)
 
 
