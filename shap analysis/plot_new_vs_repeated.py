@@ -339,6 +339,9 @@ def main():
                     help="colour scale: 98th percentile of |value| (clipped) or the flatmap's largest |value|")
     ap.add_argument("--svg", action="store_true", help="also write SVG and PDF (meshes embedded at --svg-dpi)")
     ap.add_argument("--svg-dpi", type=int, default=600, help="resolution of the embedded meshes in SVG/PDF")
+    ap.add_argument("--parcel-mean", action="store_true",
+                    help="average (not sum) over parcels: within each merged region for the map, over all of the "
+                         "patient's parcels for the band x second bars")
     ap.add_argument("--no-stats", action="store_true", help="bars and subject dots only: no CI whiskers, no stars")
     ap.add_argument("--fdr", type=float, default=0.05, help="FDR level for the band x second tests (signed measure)")
     ap.add_argument("--contrast", choices=list(CONTRASTS), default="new_vs_repeated")
@@ -350,6 +353,7 @@ def main():
     if args.merged and args.merged.stem != "merged_regions":     # e.g. merged_regions_min4_... -> _merged_min4_...
         suffix += args.merged.stem[len("merged_regions"):]
     suffix += "".join(f"_without_{e}" for e in args.exclude if f"_without_{e}" not in suffix)
+    suffix += "_parcelmean" if args.parcel_mean else ""
     C = CONTRASTS[args.contrast]
     prefix = C["prefix"]
 
@@ -363,10 +367,25 @@ def main():
         covered = ~missing.all()                    # drop features only the excluded subjects had
         values, missing = values.loc[:, covered], missing.loc[:, covered]
     regions = None
-    if args.merged:
-        values, missing, regions = merge_regions(values, missing, args.merged)
     levels = {"region": "region", "band": "band", "second": "second", "band_second": ["band", "second"]}
-    subj = {name: subject_means(values, missing, lvl, absolute, C["weights"]) for name, lvl in levels.items()}
+    if args.parcel_mean:
+        # per trial: mean over parcels (NaN skipped) instead of the sum, then as before
+        masked = values.where(~missing.to_numpy())
+        if args.merged:
+            regions = pd.read_csv(args.merged, dtype=str).set_index("parcel")["region"].to_dict()
+        cols = masked.columns
+        keys = [[(regions or {}).get(r, r) for r in cols.get_level_values("region")],
+                cols.get_level_values("band"), cols.get_level_values("second")]
+        per_region = masked.T.groupby(keys).mean().T
+        per_region.columns.names = ["region", "band", "second"]
+        per_parcel_band = masked.T.groupby(level=["band", "second"]).mean().T
+        subj = {"region": subject_means(per_region, per_region.isna(), "region", absolute, C["weights"])}
+        for name in ("band", "second", "band_second"):
+            subj[name] = subject_means(per_parcel_band, per_parcel_band.isna(), levels[name], absolute, C["weights"])
+    else:
+        if args.merged:
+            values, missing, regions = merge_regions(values, missing, args.merged)
+        subj = {name: subject_means(values, missing, lvl, absolute, C["weights"]) for name, lvl in levels.items()}
     stats = {name: pool(s, args.n_boot) for name, s in subj.items()}
     stats["band_second"].index.names = ["band", "second"]
     for name, s in stats.items():
@@ -437,15 +456,17 @@ def main():
     what = (f"|{C['formula']}|, NaN features left out; per trial summed within a "
             "region/band/second, then made absolute, " if absolute else
             f"{C['formula']} (sign flipped on {C['flipped']} trials), NaN features left out; "
-            "per trial summed within a region/band/second, ")
-    fig.text(0.07, 0.005 - 0.022 * (bool(regions) + (not absolute)),
+            + ("per trial averaged over the subject's parcels\n(A: within each merged region, summed over band/second; "
+               "B: over all parcels), " if args.parcel_mean else "per trial summed within a region/band/second, "))
+    fig.text(0.07, 0.005 - 0.022 * (bool(regions) + (not absolute) + bool(args.parcel_mean)),
              ("Error trials (new images answered old, recent/old images answered new); sign set by the true category, "
               "so > 0 still pushes towards the true label.\n" if args.trials == "error" else "") +
              what +
              f"averaged within subject ({C['balance']}), then across {n_subj} subjects.\n" +
              (f"Excluded: {', '.join(args.exclude)}. " if args.exclude else "") +
              (f"A: low-coverage parcels merged with neighbours as in {args.merged.name}, "
-              f"SHAP summed within each merged region;\n   " if regions else "A: ") +
+              f"SHAP {'averaged over the parcels' if args.parcel_mean else 'summed'} within each merged region;\n   "
+              if regions else "A: ") +
              f"{len(shown)} regions with ≥{args.min_subjects} subjects "
              f"({len(region) - len(shown)} with fewer shown dark gray); {named_txt}; "
              +
