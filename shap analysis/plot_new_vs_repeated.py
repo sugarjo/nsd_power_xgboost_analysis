@@ -329,6 +329,10 @@ def main():
     ap.add_argument("--merged", type=Path, nargs="?", const=REPO / "electrode coverages" / "figures" / "merged_regions.csv",
                     help="parcel -> merged region table (merge_low_coverage.py); SHAP is summed within merged regions")
     ap.add_argument("--n-labels", type=int, default=6, help="regions named on the map")
+    ap.add_argument("--trials", choices=["test", "error"], default="test",
+                    help="test set (correct responses) or the error trials")
+    ap.add_argument("--vmax-value", type=float, help="fixed map colour scale (e.g. from the correct-trial figure)")
+    ap.add_argument("--bar-max", type=float, help="fixed colour scale of the band x second bars")
     ap.add_argument("--rank-subcortical", action="store_true",
                     help="hippocampus/amygdala are named only if they are among the --n-labels largest |values|")
     ap.add_argument("--vmax", choices=["p98", "max"], default="p98",
@@ -342,14 +346,14 @@ def main():
     args = ap.parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)
     absolute = args.measure == "abs"
-    suffix = ("_abs" if absolute else "") + ("_merged" if args.merged else "")
+    suffix = ("_errors" if args.trials == "error" else "") + ("_abs" if absolute else "") + ("_merged" if args.merged else "")
     if args.merged and args.merged.stem != "merged_regions":     # e.g. merged_regions_min4_... -> _merged_min4_...
         suffix += args.merged.stem[len("merged_regions"):]
     suffix += "".join(f"_without_{e}" for e in args.exclude if f"_without_{e}" not in suffix)
     C = CONTRASTS[args.contrast]
     prefix = C["prefix"]
 
-    out = signed_shap(pd.read_pickle(args.pkl), args.contrast)
+    out = signed_shap(pd.read_pickle(args.pkl), args.contrast, args.trials)
     values, missing = (out["contrast"] if absolute else out["signed"]), out["missing"]
     if args.exclude:
         keep = ~values.index.get_level_values("subject").isin(args.exclude)
@@ -375,7 +379,8 @@ def main():
     # 98th percentile of |mean| so a single region does not wash out the rest;
     # the colour bar marks the clipped ends.
     cortical_shown = shown["mean"][~shown.index.isin(list(ASEG_LABELS))]
-    vmax = (np.abs(cortical_shown).max() if args.vmax == "max" else np.percentile(np.abs(shown["mean"]), 98))
+    vmax = (args.vmax_value if args.vmax_value else
+            np.abs(cortical_shown).max() if args.vmax == "max" else np.percentile(np.abs(shown["mean"]), 98))
     cmap = SEQUENTIAL if absolute else DIVERGING
     norm = Normalize(0, vmax) if absolute else TwoSlopeNorm(0, -vmax, vmax)
 
@@ -407,7 +412,7 @@ def main():
 
     # Bars use the map's colormap on their own symmetric scale (the map's clipped
     # scale would saturate them).
-    bar_max = np.abs(stats["band_second"]["mean"]).max()
+    bar_max = args.bar_max or np.abs(stats["band_second"]["mean"]).max()
     # signed measure: one-sided one-sample t-test per band x second over subjects
     # (H1: mean > 0), Benjamini-Hochberg FDR across the 14 band x second bars
     q = None
@@ -423,25 +428,30 @@ def main():
 
     n_subj = len(subj["band"])
     fig.suptitle(f"How strongly each region, band and second drives the {C['title']} decision"
-                 if absolute else f"What drives the model's {C['title']} decision",
+                 if absolute else f"What drives the model's {C['title']} decision"
+                 + (" on error trials" if args.trials == "error" else ""),
                  fontsize=13, color=INK, x=0.07, ha="left")
     what = (f"|{C['formula']}|, NaN features left out; per trial summed within a "
             "region/band/second, then made absolute, " if absolute else
             f"{C['formula']} (sign flipped on {C['flipped']} trials), NaN features left out; "
             "per trial summed within a region/band/second, ")
     fig.text(0.07, 0.005 - 0.022 * (bool(regions) + (not absolute)),
+             ("Error trials (new images answered old, recent/old images answered new); sign set by the true category, "
+              "so > 0 still pushes towards the true label.\n" if args.trials == "error" else "") +
              what +
              f"averaged within subject ({C['balance']}), then across {n_subj} subjects.\n" +
              (f"Excluded: {', '.join(args.exclude)}. " if args.exclude else "") +
              (f"A: low-coverage parcels merged with neighbours as in {args.merged.name}, "
               f"SHAP summed within each merged region;\n   " if regions else "A: ") +
              f"{len(shown)} regions with ≥{args.min_subjects} subjects "
-             f"({len(region) - len(shown)} with fewer shown dark gray); top {args.n_labels} by |value| named{' (hippocampus and amygdala included in the ranking)' if args.rank_subcortical else ''}; "
+             f"({len(region) - len(shown)} with fewer shown dark gray); {(f"top {args.n_labels} by |value| named" + (' (hippocampus and amygdala included in the ranking)' if args.rank_subcortical else '')) if args.n_labels else 'no regions named'}; "
              +
-             (f"colour scale up to {'' if absolute else '±'}{vmax:.3f} (largest |value| on the flatmap).\n"
+             (f"colour scale fixed at {'' if absolute else '±'}{vmax:.3f} (as in the correct-trial figure).\n"
+              if args.vmax_value else
+              f"colour scale up to {'' if absolute else '±'}{vmax:.3f} (largest |value| on the flatmap).\n"
               if args.vmax == "max" else
               f"colour scale clipped at {'' if absolute else '±'}{vmax:.3f} (98th percentile of |value|).\n") +
-             f"B: per band and second; map colormap on its own scale ({'0–' if absolute else '±'}{bar_max:.3f}); bars = mean over subjects, "
+             f"B: per band and second; map colormap on its own scale ({'0–' if absolute else '±'}{bar_max:.3f}{', fixed as for correct trials' if args.bar_max else ''}); bars = mean over subjects, "
              + ("dots = subjects." if args.no_stats else "whiskers = 95% bootstrap CI over subjects, dots = subjects")
              + ("" if args.no_stats else "." if absolute else f";\n   stars: mean > 0, one-sided one-sample t-test over subjects, Benjamini-Hochberg "
                                      f"FDR across the 14 bars (* q < {args.fdr:g}, ** q < 0.01, *** q < 0.001)."),
