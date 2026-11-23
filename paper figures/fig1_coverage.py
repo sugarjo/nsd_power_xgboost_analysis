@@ -120,7 +120,7 @@ def main():
 
     # ---- layout: 183 mm (double column) wide
     fig = plt.figure(figsize=(7.2, 6.9), facecolor="white")
-    gs = fig.add_gridspec(3, 4, height_ratios=[0.72, 1.55, 0.62], hspace=0.04, wspace=0.03,
+    gs = fig.add_gridspec(3, 4, height_ratios=[0.72, 1.55, 0.72], hspace=0.04, wspace=0.03,
                           left=0.01, right=0.99, top=0.97, bottom=0.01)
     for col, view in enumerate(["Lateral", "Medial", "Ventral"]):
         ax = fig.add_subplot(gs[0, col])
@@ -146,15 +146,17 @@ def main():
     rasterize(axc)
     segs = region_borders(patch_xy, patch_faces, reg_vertex[vno])
     axc.add_collection(LineCollection(segs, colors=INK, linewidths=0.35))
-    axc.set_title(f"Merged regions (≥ 4 patients)", fontsize=7, color=INK, pad=1)
+    axc.set_title(f"Merged regions (≥ 4 patients), numbered (key below)", fontsize=7, color=INK, pad=1)
     pos_b, pos_c = axb.get_position(), axc.get_position()
     fig.text(0.01, pos_b.y1 + 0.012, "B", fontsize=10, fontweight="bold", color=INK, va="bottom")
     fig.text(pos_c.x0, pos_c.y1 + 0.012, "C", fontsize=10, fontweight="bold", color=INK, va="bottom")
 
-    # number the merged (multi-parcel) regions on panel C
-    multi = table[table.n_parcels_in_region > 1].region.unique()
-    order = sorted(multi, key=lambda r: -np.median(patch_xy[reg_vertex[vno] == r][:, 1])
-                   if (reg_vertex[vno] == r).any() else 0)
+    # number every region on panel C, in reading order (top to bottom in bands, left to right)
+    on_map = [r for r in table.region.unique() if (reg_vertex[vno] == r).any()]
+    centre = {r: np.median(patch_xy[reg_vertex[vno] == r], 0) for r in on_map}
+    span = np.ptp(patch_xy[:, 1])
+    order = sorted(on_map, key=lambda r: (-np.floor((centre[r][1] - patch_xy[:, 1].max()) / (span / 7)),
+                                          centre[r][0]))
     key = []
     for i, r in enumerate(order, 1):
         mask = reg_vertex[vno] == r
@@ -162,31 +164,34 @@ def main():
             continue
         pts = patch_xy[largest_piece(mask, patch_faces)]
         xy = pts[np.argmin(((pts - np.median(pts, 0)) ** 2).sum(1))]
-        axc.text(*xy, str(i), fontsize=4.5, ha="center", va="center", color=INK,
+        axc.text(*xy, str(i), fontsize=3.8, ha="center", va="center", color=INK,
                  bbox=dict(boxstyle="round,pad=0.12", fc="white", ec="none", alpha=0.85))
         key.append((i, r, int(n_region[r])))
     pd.DataFrame(key, columns=["number", "region", "patients"]).to_csv(
         args.out_dir / "fig1_merged_regions_key.csv", index=False)
 
     # colour bar and key
-    cax = fig.add_axes([0.06, 0.205, 0.34, 0.012])
+    cax = fig.add_axes([0.04, 0.215, 0.3, 0.012])
     cb = fig.colorbar(plt.cm.ScalarMappable(norm=norm, cmap=cmap), cax=cax, orientation="horizontal")
     cb.set_ticks(np.arange(1, vmax + 1, 2))
     cb.outline.set_visible(False)
     cb.ax.tick_params(labelsize=6, colors=INK_MUTED, length=0)
     cb.set_label("Patients with a bipolar channel", fontsize=7, color=INK)
-    fig.text(0.06, 0.15,
+    fig.text(0.04, 0.16,
              f"{len(cov)} patients; {int((n_pat.drop([r for r in cov.columns if r not in set(parcel)]) > 0).sum())} "
              "of 180 HCP-MMP1 parcels covered.\nGray: no channel. Hemispheres pooled,\nleft fsaverage hemisphere."
              + (f"\nNot shown: " + ", ".join(f"{r} ({int(n_pat[r])})" for r in cov.columns if r in NOT_SHOWN)
                 if any(r in NOT_SHOWN for r in cov.columns) else ""),
              fontsize=6, color=INK_MUTED, va="top")
-    ncol = 3
+    ncol = 4
     per_col = int(np.ceil(len(key) / ncol))
-    for c in range(ncol):
+    renderer = fig.canvas.get_renderer()
+    x = 0.355
+    for c in range(ncol):                         # each column starts after the widest line of the previous one
         chunk = key[c * per_col:(c + 1) * per_col]
-        fig.text(0.44 + c * 0.19, 0.225, "\n".join(f"{i:>2}  {r} ({n})" for i, r, n in chunk),
-                 fontsize=5, color=INK, va="top", family="DejaVu Sans", linespacing=1.25)
+        t = fig.text(x, 0.235, "\n".join(f"{i:>2}  {r} ({n})" for i, r, n in chunk),
+                     fontsize=4.5, color=INK, va="top", family="DejaVu Sans", linespacing=1.25)
+        x += t.get_window_extent(renderer).width / fig.bbox.width + 0.02
 
     for ext in ("svg", "pdf"):
         fig.savefig(args.out_dir / f"fig1_coverage.{ext}", dpi=args.dpi, bbox_inches="tight")
