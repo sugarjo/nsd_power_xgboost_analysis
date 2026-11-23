@@ -35,13 +35,15 @@ def main():
     ap.add_argument("--pkl", type=Path, default=REPO / "random_data_bipolar_xgboost_3w.pkl")
     ap.add_argument("--contrast", choices=list(CONTRASTS), default="new_vs_repeated")
     ap.add_argument("--color-max", type=float, required=True, help="colour scale (+-), e.g. the main flatmap's")
+    ap.add_argument("--trials", nargs="+", choices=["test", "error"], default=["test", "error"],
+                    help="trial sets to plot (the y range is shared between the sets given)")
     ap.add_argument("--out-dir", type=Path, default=HERE / "figures")
     args = ap.parse_args()
 
     data = pd.read_pickle(args.pkl)
     C = CONTRASTS[args.contrast]
     subj = {}
-    for trials in ("test", "error"):
+    for trials in args.trials:
         out = signed_shap(data, args.contrast, trials)
         subj[trials] = subject_means(out["signed"], out["missing"], ["band", "second"], weights=C["weights"])
     lo = min(min(np.nanmin(s.to_numpy(float)), 0) for s in subj.values())
@@ -60,7 +62,8 @@ def main():
                  f"{C['formula']} (sign flipped on {C['flipped']} trials; error trials: sign set by the true category); "
                  "\nper trial summed over all of the subject's features in each band/second, missing features left out; "
                  f"averaged within subject\n({C['balance']}), then across subjects. Bars = mean, dots = subjects. "
-                 f"Colour scale ±{args.color_max:.3f} (main figure's flatmap); same y axis for correct and error trials.",
+                 f"Colour scale ±{args.color_max:.3f} (main figure's flatmap)"
+                 + ("; same y axis for correct and error trials." if len(args.trials) > 1 else "."),
                  fontsize=7.5, color=INK_MUTED, va="top")
         stem = args.out_dir / f"{C['prefix']}_band_second_{'errors_' if trials == 'error' else ''}all"
         for ext in ("svg", "pdf", "png"):
