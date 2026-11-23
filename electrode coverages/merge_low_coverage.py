@@ -123,6 +123,90 @@ def merge_parcels(subjects: dict, adj: dict, area: dict, min_subjects: int, with
     return group, members, subj, log
 
 
+def staged_merge(subjects: dict, parcel: np.ndarray, faces: np.ndarray, area: dict, min_subjects: int):
+    """Merge in stages by coverage: first every region with 1 subject, then 2, ... up to min_subjects - 1.
+
+    A region at the current stage is merged into the neighbouring region with the fewest
+    subjects (ties: the longest shared border, then the smallest area). Neighbours share a
+    border on the surface, so no other covered region lies between two merged parcels; a
+    region with no covered neighbour is joined through uncovered parcels only (nearest by
+    number of uncovered parcels crossed). Within a stage the smallest regions go first, and
+    a region that is still at the stage level after a merge (subjects overlap) is merged again.
+    Returns group, members, subj, log (as merge_parcels)."""
+    edges = np.r_[faces[:, [0, 1]], faces[:, [1, 2]], faces[:, [2, 0]]]
+    a, b = parcel[edges[:, 0]], parcel[edges[:, 1]]
+    keep = (a != b) & (a != "") & (b != "")
+    border = {}
+    for (p, q), n in pd.Series(1, index=pd.MultiIndex.from_arrays([a[keep], b[keep]])).groupby(level=[0, 1]).sum().items():
+        border[p, q] = border.get((p, q), 0) + n
+    covered = set(subjects)
+    padj = {}
+    for (p, q) in border:
+        padj.setdefault(p, set()).add(q)
+
+    def through_uncovered(p):
+        """Covered parcels reachable from p via uncovered parcels only, with the number crossed."""
+        out, seen, frontier, d = {}, {p}, [p], 0
+        while frontier and not out:
+            d += 1
+            nxt = []
+            for x in frontier:
+                for y in padj.get(x, ()):
+                    if y in seen:
+                        continue
+                    seen.add(y)
+                    if y in covered:
+                        if x != p:
+                            out[y] = d
+                    else:
+                        nxt.append(y)
+            frontier = nxt
+        return out
+
+    group = {p: p for p in subjects}
+    members = {p: [p] for p in subjects}
+    subj = {p: set(s) for p, s in subjects.items()}
+    size = {p: area[p] for p in subjects}
+    log = []
+
+    def neighbours(g):
+        shared = {}
+        for p in members[g]:
+            for q in padj.get(p, ()):
+                if q in group and group[q] != g:
+                    shared[group[q]] = shared.get(group[q], 0) + border.get((p, q), 0)
+        if shared:
+            return shared, "border"
+        far = {}
+        for p in members[g]:
+            for q, d in through_uncovered(p).items():
+                if group[q] != g:
+                    far[group[q]] = min(far.get(group[q], 99), d)
+        return {h: -d for h, d in far.items()}, "via uncovered parcels"     # fewer crossed = better
+
+    for level in range(1, min_subjects):
+        while True:
+            low = [g for g in members if len(subj[g]) == level]
+            low = [g for g in low if neighbours(g)[0]]
+            if not low:
+                break
+            g = min(low, key=lambda g: (size[g], g))
+            shared, how = neighbours(g)
+            h = min(shared, key=lambda h: (len(subj[h]), -shared[h], size[h], h))
+            log.append((" + ".join(members[g]), " + ".join(members[h]) + ("" if how == "border" else f"  [{how}]"),
+                        len(subj[g] | subj[h])))
+            keep_id, drop_id = (h, g) if size[h] >= size[g] else (g, h)
+            for p in members[drop_id]:
+                group[p] = keep_id
+            members[keep_id] = members[h] + members[g] if keep_id == h else members[g] + members[h]
+            members.pop(drop_id)
+            subj[keep_id] = subj[g] | subj[h]
+            subj.pop(drop_id)
+            size[keep_id] = size[g] + size[h]
+            size.pop(drop_id)
+    return group, members, subj, log
+
+
 def fallback_merge(members, subj, group, parcel, faces, pial_v, min_subjects, log):
     """Join each region still below min_subjects to a region with at least min_subjects, across groups:
     the neighbour sharing the longest border, else (no covered neighbour) the nearest region centre."""
@@ -164,6 +248,9 @@ def main():
                     help='only merge parcels of the same group in this column of --labels, e.g. "Regions ROIs"')
     ap.add_argument("--labels", type=Path, default=HERE / "HPC_MMP1_Labels.xlsx",
                     help="parcel table with a Label column (used with --within)")
+    ap.add_argument("--staged", action="store_true",
+                    help="merge in stages: all regions with 1 subject first, then 2, ... (into the neighbour with the "
+                         "fewest subjects); ignores --within and --fallback")
     ap.add_argument("--fallback", action="store_true",
                     help="afterwards join regions still below --min-subjects to a region with enough subjects, "
                          "across groups (longest shared border, else nearest centre)")
@@ -199,9 +286,12 @@ def main():
         if unknown:
             print(f"no {args.within!r} for {unknown}; these are never merged")
         adj = bridge_uncovered(adj, set(subjects), within)
-    group, members, subj, log = merge_parcels(subjects, adj, area, args.min_subjects, within)
+    if args.staged:
+        group, members, subj, log = staged_merge(subjects, parcel, faces, area, args.min_subjects)
+    else:
+        group, members, subj, log = merge_parcels(subjects, adj, area, args.min_subjects, within)
     joined = []
-    if args.fallback:
+    if args.fallback and not args.staged:
         joined = fallback_merge(members, subj, group, parcel, faces, pial_v, args.min_subjects, log)
     name = {g: "+".join(m) for g, m in members.items()}
 
@@ -213,7 +303,7 @@ def main():
     table = pd.DataFrame(rows).sort_values(["region", "parcel"])
     if within is not None:
         table.insert(1, args.within, table["parcel"].map(lambda p: within.get(p, within.get(p.split("-")[0]))))
-    suffix = ("" if args.min_subjects == 3 else f"_min{args.min_subjects}") + \
+    suffix = ("" if args.min_subjects == 3 else f"_min{args.min_subjects}") + ("_staged" if args.staged else "") + \
         (f"_within_{args.within.replace(' ', '')}" if args.within else "") + \
         ("_fallback" if args.fallback else "") + "".join(f"_without_{e}" for e in args.exclude)
     table.to_csv(args.out_dir / f"merged_regions{suffix}.csv", index=False)

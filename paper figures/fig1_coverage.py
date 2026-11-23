@@ -74,7 +74,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--pkl", type=Path, default=REPO / "random_data_bipolar_xgboost_3w.pkl")
     ap.add_argument("--merged", type=Path, default=REPO / "electrode coverages" / "figures" /
-                    "merged_regions_min4_within_RegionsROIs_fallback.csv")
+                    "merged_regions_min4_staged.csv")
     ap.add_argument("--cache", type=Path, default=REPO / "data" / "fsaverage")
     ap.add_argument("--out-dir", type=Path, default=HERE / "output")
     ap.add_argument("--vmax", type=int, help="top of the colour scale (default: the largest coverage of any region)")
