@@ -452,10 +452,9 @@ def main():
     if args.svg:                  # vector text and lines; the cortical / subcortical meshes as 600 dpi images
         from matplotlib.collections import PolyCollection
         plt.rcParams.update({"svg.fonttype": "none", "pdf.fonttype": 42})
-        for a in fig.get_axes():
-            for c in a.collections:
-                if isinstance(c, PolyCollection) and len(c.get_paths()) > 1000:
-                    c.set_rasterized(True)
+        for c in fig.findobj(PolyCollection):   # includes inset (child) axes
+            if len(c.get_paths()) > 1000:
+                c.set_rasterized(True)
         for ext in ("svg", "pdf"):
             fig.savefig(path.with_suffix(f".{ext}"), dpi=args.svg_dpi, bbox_inches="tight")
         print("wrote", path.with_suffix(".svg"), "and .pdf")
