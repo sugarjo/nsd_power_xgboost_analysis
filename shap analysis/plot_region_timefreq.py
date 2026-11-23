@@ -40,6 +40,9 @@ def main():
     ap.add_argument("--contrasts", nargs="+", choices=list(CONTRASTS), default=list(CONTRASTS))
     ap.add_argument("--combine", action="store_true",
                     help="collapse all --regions into one region (SHAP summed over them per trial)")
+    ap.add_argument("--trials", choices=["test", "error"], default="test", help="correct (test set) or error trials")
+    ap.add_argument("--color-max", type=float, help="fixed bar colour scale (+-), e.g. to match the correct-trial figure")
+    ap.add_argument("--ylim", type=float, nargs=2, help="fixed y range, e.g. to match the correct-trial figure")
     ap.add_argument("--parcel-mean", action="store_true",
                     help="per trial, average SHAP over the original HCP-MMP1 parcels the patient has (instead of the sum)")
     ap.add_argument("--merged", type=Path, default=REPO / "electrode coverages" / "figures" /
@@ -51,7 +54,7 @@ def main():
     lv = ["region", "band", "second"]
     subj = {}
     for c in args.contrasts:
-        out = signed_shap(data, c)
+        out = signed_shap(data, c, args.trials)
         if args.parcel_mean:
             # per trial and band x second: mean over the parcels (with data) of each shown region
             parcel_of = pd.read_csv(args.merged, dtype=str).set_index("parcel")["region"].to_dict()
@@ -84,7 +87,7 @@ def main():
         subj[c] = s.loc[:, s.columns.get_level_values("region").isin(wanted)]
     regions_shown = wanted
 
-    vmax = max(np.nanmax(np.abs(s.mean().to_numpy(float))) for s in subj.values())
+    vmax = args.color_max or max(np.nanmax(np.abs(s.mean().to_numpy(float))) for s in subj.values())
     norm = TwoSlopeNorm(0, -vmax, vmax)
     lo = min(np.nanmin(s.to_numpy(float)) for s in subj.values())
     hi = max(np.nanmax(s.to_numpy(float)) for s in subj.values())
@@ -102,12 +105,13 @@ def main():
             ax = axes[i, j]
             band_second_panel(ax, s, stats, norm, DIVERGING, "Net signed SHAP (log-odds)" if j == 0 else "",
                               None, whiskers=False)
-            ax.set_ylim(min(lo, 0) - pad, hi + pad)
+            ax.set_ylim(*(args.ylim or (min(lo, 0) - pad, hi + pad)))
             ax.set_title(f"{region}: {CONTRASTS[c]['title']}  ({len(s)} subjects)", fontsize=10.5, color=INK,
                          loc="left")
             rows.append(s.stack(level=["band", "second"], future_stack=True).rename("value").reset_index()
                         .assign(contrast=c, region=region))
     fig.suptitle("Signed SHAP by band and second" + (", regions combined" if args.combine else ", selected regions")
+                 + (", error trials" if args.trials == "error" else "")
                  + (", mean per parcel" if args.parcel_mean else ""),
                  fontsize=13, color=INK, x=0.02, ha="left", y=1 - 0.12 / height)
     import textwrap
@@ -123,7 +127,7 @@ def main():
                  if args.combine else ""))
     footer = "\n".join(textwrap.fill(line, 150 if nc > 1 else 125) for line in footer.replace("\n", " ").split("\n"))
     fig.text(0.02, 0.45 / height, footer, fontsize=8, color=INK_MUTED, va="top")
-    tag = ("combined_" if args.combine else "") + ("parcelmean_" if args.parcel_mean else "") + "_".join(re.sub(r"[^A-Za-z0-9]+", "", r) for r in args.regions)
+    tag = ("errors_" if args.trials == "error" else "") + ("combined_" if args.combine else "") + ("parcelmean_" if args.parcel_mean else "") + "_".join(re.sub(r"[^A-Za-z0-9]+", "", r) for r in args.regions)
     pd.concat(rows).to_csv(args.out_dir / f"timefreq_{tag}.csv", index=False)
     path = args.out_dir / f"timefreq_{tag}.png"
     fig.savefig(path, dpi=200, bbox_inches="tight")
