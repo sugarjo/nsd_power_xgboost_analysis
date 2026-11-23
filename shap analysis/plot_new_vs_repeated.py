@@ -334,7 +334,7 @@ def main():
     ap.add_argument("--vmax", choices=["p98", "max"], default="p98",
                     help="colour scale: 98th percentile of |value| (clipped) or the flatmap's largest |value|")
     ap.add_argument("--svg", action="store_true", help="also write SVG and PDF (meshes embedded at --svg-dpi)")
-    ap.add_argument("--svg-dpi", type=int, default=300, help="resolution of the embedded meshes in SVG/PDF")
+    ap.add_argument("--svg-dpi", type=int, default=600, help="resolution of the embedded meshes in SVG/PDF")
     ap.add_argument("--no-stats", action="store_true", help="bars and subject dots only: no CI whiskers, no stars")
     ap.add_argument("--fdr", type=float, default=0.05, help="FDR level for the band x second tests (signed measure)")
     ap.add_argument("--contrast", choices=list(CONTRASTS), default="new_vs_repeated")
