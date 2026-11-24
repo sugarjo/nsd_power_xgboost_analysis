@@ -41,6 +41,9 @@ def main():
     ap.add_argument("--combine", action="store_true",
                     help="collapse all --regions into one region (SHAP summed over them per trial)")
     ap.add_argument("--trials", choices=["test", "error"], default="test", help="correct (test set) or error trials")
+    ap.add_argument("--drop-recent-errors", action="store_true",
+                    help="new vs repeated, error trials: leave recent trials out (new and consolidated 1/2, 1/2)")
+    ap.add_argument("--suffix", default="", help="appended to the output file name")
     ap.add_argument("--color-max", type=float, help="fixed bar colour scale (+-), e.g. to match the correct-trial figure")
     ap.add_argument("--ylim", type=float, nargs=2, help="fixed y range, e.g. to match the correct-trial figure")
     ap.add_argument("--parcel-mean", action="store_true",
@@ -79,7 +82,10 @@ def main():
                  cols.get_level_values(1), cols.get_level_values(2)], names=cols.names)
             values = values.set_axis(rename(values.columns), axis=1)
             missing = missing.set_axis(rename(missing.columns), axis=1)
-        s = subject_means(values, missing, lv, weights=CONTRASTS[c]["weights"])
+        w = CONTRASTS[c]["weights"]
+        if args.drop_recent_errors and args.trials == "error" and c == "new_vs_repeated":
+            w = {"new": 0.5, "old": 0.5}
+        s = subject_means(values, missing, lv, weights=w)
         wanted = [" + ".join(args.regions)] if args.combine else args.regions
         unknown = [r for r in wanted if r not in s.columns.get_level_values("region")]
         if unknown:
@@ -112,6 +118,7 @@ def main():
                         .assign(contrast=c, region=region))
     fig.suptitle("Signed SHAP by band and second" + (", regions combined" if args.combine else ", selected regions")
                  + (", error trials" if args.trials == "error" else "")
+                 + (" (recent left out)" if args.drop_recent_errors and args.trials == "error" else "")
                  + (", mean per parcel" if args.parcel_mean else ""),
                  fontsize=13, color=INK, x=0.02, ha="left", y=1 - 0.12 / height)
     import textwrap
@@ -121,14 +128,17 @@ def main():
                 "does not grow with the number of parcels covered; " if args.parcel_mean else
                 "SHAP summed over the parcels of a merged region; ")
              + "averaged within subject with balanced trial-type weights\n"
-             "(new vs repeated: new, recent, old 1/2, 1/4, 1/4; recent vs consolidated: 1/2, 1/2), then across the "
+             + ("(new vs repeated, error trials: new and consolidated 1/2, 1/2, recent error trials left out as too "
+                "few; " if args.drop_recent_errors and args.trials == "error" else
+                "(new vs repeated: new, recent, old 1/2, 1/4, 1/4; ")
+             + "recent vs consolidated: 1/2, 1/2), then across the "
              f"subjects with the region. Bars = mean, dots = subjects. Regions: {args.merged.name}."
               + (" Combined: the listed regions taken together; a subject counts if it has any of them."
                  if args.combine else ""))
     footer = "\n".join(textwrap.fill(line, 150 if nc > 1 else 125) for line in footer.replace("\n", " ").split("\n"))
     fig.text(0.02, 0.45 / height, footer, fontsize=8, color=INK_MUTED, va="top")
     tag = ("recent_vs_consolidated_" if args.contrasts == ["recent_vs_consolidated"] else "") + \
-        ("errors_" if args.trials == "error" else "") + ("combined_" if args.combine else "") + ("parcelmean_" if args.parcel_mean else "") + "_".join(re.sub(r"[^A-Za-z0-9]+", "", r) for r in args.regions)
+        ("errors_" if args.trials == "error" else "") + ("norecent_" if args.drop_recent_errors and args.trials == "error" else "") + ("combined_" if args.combine else "") + ("parcelmean_" if args.parcel_mean else "") + "_".join(re.sub(r"[^A-Za-z0-9]+", "", r) for r in args.regions) + args.suffix
     pd.concat(rows).to_csv(args.out_dir / f"timefreq_{tag}.csv", index=False)
     path = args.out_dir / f"timefreq_{tag}.png"
     fig.savefig(path, dpi=200, bbox_inches="tight")
