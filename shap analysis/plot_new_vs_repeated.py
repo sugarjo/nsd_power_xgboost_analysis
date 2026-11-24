@@ -344,6 +344,11 @@ def main():
     ap.add_argument("--parcel-mean", action="store_true",
                     help="average (not sum) over parcels: within each merged region for the map, over all of the "
                          "patient's parcels for the band x second bars")
+    ap.add_argument("--drop-recent-errors", action="store_true",
+                    help="error trials: leave the (few) recent trials out; new vs repeated weights new and old 1/2, "
+                         "1/2, recent vs consolidated uses the consolidated error trials only")
+    ap.add_argument("--trial-types", nargs="+", choices=["new", "recent", "old"],
+                    help="use only these trial types (equal weights), e.g. old = consolidated trials only")
     ap.add_argument("--map-only", action="store_true", help="also write panel A (flatmap) on its own (<name>_map)")
     ap.add_argument("--no-stats", action="store_true", help="bars and subject dots only: no CI whiskers, no stars")
     ap.add_argument("--fdr", type=float, default=0.05, help="FDR level for the band x second tests (signed measure)")
@@ -358,6 +363,18 @@ def main():
     suffix += "".join(f"_without_{e}" for e in args.exclude if f"_without_{e}" not in suffix)
     suffix += "_parcelmean" if args.parcel_mean else ""
     C = CONTRASTS[args.contrast]
+    if args.drop_recent_errors and args.trials == "error":   # too few recent error trials
+        C = dict(C)
+        if args.contrast == "new_vs_repeated":
+            C["weights"], C["balance"] = {"new": 0.5, "old": 0.5}, "new and old weighted 1/2, 1/2; recent error trials left out"
+        else:
+            C["weights"], C["balance"] = {"old": 1.0}, "consolidated (old) error trials only; recent error trials left out"
+        suffix += "_norecent"
+    if args.trial_types:                                     # e.g. consolidated trials only, for comparison
+        C = dict(C)
+        C["weights"] = {t: 1 / len(args.trial_types) for t in args.trial_types}
+        C["balance"] = " and ".join(args.trial_types) + " trials only" + (", equal weights" if len(args.trial_types) > 1 else "")
+        suffix += "_only" + "".join(args.trial_types)
     prefix = C["prefix"]
 
     out = signed_shap(pd.read_pickle(args.pkl), args.contrast, args.trials)
