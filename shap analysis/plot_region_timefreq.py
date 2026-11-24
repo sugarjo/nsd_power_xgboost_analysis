@@ -43,6 +43,8 @@ def main():
     ap.add_argument("--trials", choices=["test", "error"], default="test", help="correct (test set) or error trials")
     ap.add_argument("--drop-recent-errors", action="store_true",
                     help="new vs repeated, error trials: leave recent trials out (new and consolidated 1/2, 1/2)")
+    ap.add_argument("--panel-height", type=float, default=3.4,
+                    help="inches per row of panels (3.4 = default; 1.85 halves the plot height)")
     ap.add_argument("--suffix", default="", help="appended to the output file name")
     ap.add_argument("--color-max", type=float, help="fixed bar colour scale (+-), e.g. to match the correct-trial figure")
     ap.add_argument("--ylim", type=float, nargs=2, help="fixed y range, e.g. to match the correct-trial figure")
@@ -99,7 +101,7 @@ def main():
     hi = max(np.nanmax(s.to_numpy(float)) for s in subj.values())
     pad = 0.06 * (hi - lo)
     nr, nc = len(regions_shown), len(args.contrasts)
-    height = 3.4 * nr + 1.8
+    height = args.panel_height * nr + 1.8
     fig, axes = plt.subplots(nr, nc, figsize=(max(7.2 * nc, 9), height), facecolor="white", squeeze=False,
                              gridspec_kw=dict(hspace=0.55, wspace=0.12, top=1 - 0.75 / height,
                                               bottom=1.35 / height, left=0.08, right=0.98))

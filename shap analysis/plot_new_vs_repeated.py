@@ -312,8 +312,9 @@ def band_second_panel(ax, subj: pd.DataFrame, stats: pd.DataFrame, norm, cmap=DI
     ax.set_xlim(-0.6, len(BANDS) - 0.4)
     ax.set_xticks(x, [f"{sec} s" for _, sec in ticks], fontsize=7, color=INK_MUTED)
     for i, band in enumerate(BANDS):
-        ax.text(i, -0.1, BAND_LABELS.get(band, band), transform=ax.get_xaxis_transform(),
-                ha="center", va="top", fontsize=9, color=INK)
+        # fixed distance below the axis (in points), so short panels keep the labels apart
+        ax.annotate(BAND_LABELS.get(band, band), (i, 0), xycoords=ax.get_xaxis_transform(), xytext=(0, -17),
+                    textcoords="offset points", ha="center", va="top", fontsize=9, color=INK)
     ax.set_ylabel(ylabel, fontsize=8, color=INK)
     ax.set_title("B   Frequency bands, split by second", fontsize=10, color=INK, loc="left")
 
