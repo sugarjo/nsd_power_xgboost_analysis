@@ -344,6 +344,7 @@ def main():
     ap.add_argument("--parcel-mean", action="store_true",
                     help="average (not sum) over parcels: within each merged region for the map, over all of the "
                          "patient's parcels for the band x second bars")
+    ap.add_argument("--map-only", action="store_true", help="also write panel A (flatmap) on its own (<name>_map)")
     ap.add_argument("--no-stats", action="store_true", help="bars and subject dots only: no CI whiskers, no stars")
     ap.add_argument("--fdr", type=float, default=0.05, help="FDR level for the band x second tests (signed measure)")
     ap.add_argument("--contrast", choices=list(CONTRASTS), default="new_vs_repeated")
@@ -499,6 +500,20 @@ def main():
         for ext in ("svg", "pdf"):
             fig.savefig(path.with_suffix(f".{ext}"), dpi=args.svg_dpi, bbox_inches="tight")
         print("wrote", path.with_suffix(".svg"), "and .pdf")
+    if args.map_only:             # panel A (flatmap, labels, colour bar) on its own
+        from matplotlib.transforms import Bbox
+        for t in [fig._suptitle, ax.title, ax._left_title, ax._right_title] + list(fig.texts):   # no titles or footer
+            if t is not None:
+                t.set_visible(False)
+        fig.canvas.draw()
+        box = Bbox.union([ax.get_window_extent()] +
+                         [c.get_tightbbox(fig.canvas.get_renderer()) for c in ax.child_axes])
+        box = box.transformed(fig.dpi_scale_trans.inverted()).padded(0.08)
+        map_path = path.with_name(path.stem + "_map.png")
+        exts = ("png", "svg", "pdf") if args.svg else ("png",)
+        for ext in exts:
+            fig.savefig(map_path.with_suffix(f".{ext}"), dpi=args.svg_dpi if ext != "png" else 300, bbox_inches=box)
+        print("wrote", map_path.with_suffix(".svg" if args.svg else ".png"))
 
 
 if __name__ == "__main__":
