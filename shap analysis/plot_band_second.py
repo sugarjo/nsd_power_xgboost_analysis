@@ -13,7 +13,7 @@ trials keep 1/2, 1/4, 1/4. The y range is still shared with the correct trials.
 
 Written to --out-dir: <contrast>_band_second_[errors_]all.{svg,pdf,png};
 with --drop-recent-errors: <contrast>_band_second_errors_norecent_all and
-<contrast>_band_second_all_ynorecent (correct trials on the shared y range)
+<contrast>_band_second_all_sharedy (correct trials on the shared y range)
 """
 
 import argparse
@@ -86,7 +86,7 @@ def main():
         stem = args.out_dir / f"{C['prefix']}_band_second_{'errors_' if trials == 'error' else ''}all"
         if args.drop_recent_errors:
             stem = args.out_dir / (f"{C['prefix']}_band_second_errors_norecent_all" if trials == "error"
-                                   else f"{C['prefix']}_band_second_all_ynorecent")
+                                   else f"{C['prefix']}_band_second_all_sharedy")
         for ext in ("svg", "pdf", "png"):
             fig.savefig(stem.with_suffix(f".{ext}"), dpi=300, bbox_inches="tight")
         plt.close(fig)
