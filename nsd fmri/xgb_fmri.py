@@ -27,7 +27,7 @@ Pipeline (same as sEEG)
     hyperparameter) for early stopping
   - sample weights balanced over participant x category (subject_categories)
   - XGBClassifier(objective="multi:softprob", eval_metric="auc", num_class=3)
-  - hyperopt (TPE; --algo atpe as in the sEEG script, needs lightgbm), loss =
+  - hyperopt ATPE as in the sEEG script (needs lightgbm; --algo tpe without it), loss =
     -macro one-vs-one AUC on the validation set, searched until --patience
     evaluations bring no improvement (sEEG: hyperparams_iterations = 50)
   - SHAP (TreeExplainer, interventional) on test, error and no-response
@@ -264,7 +264,7 @@ def main():
     ap.add_argument("--hemispheres", choices=["mean", "separate"], default="mean")
     ap.add_argument("--psc", action="store_true", help="raw percent signal change instead of session z-scored betas")
     ap.add_argument("--space", choices=["fmri", "ephys"], default="fmri")
-    ap.add_argument("--algo", choices=["tpe", "atpe"], default="tpe")
+    ap.add_argument("--algo", choices=["atpe", "tpe"], default="atpe")
     ap.add_argument("--patience", type=int, default=50,
                     help="stop the search after this many evaluations without improvement (sEEG: 50); 0 = no search")
     ap.add_argument("--max-evals", type=int, default=500, help="upper limit of hyperopt evaluations")
