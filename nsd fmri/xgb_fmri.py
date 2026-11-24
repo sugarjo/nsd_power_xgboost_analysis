@@ -31,10 +31,16 @@ Pipeline (same as sEEG)
     -macro one-vs-one AUC on the validation set, searched until --patience
     evaluations bring no improvement (sEEG: hyperparams_iterations = 50)
   - SHAP (TreeExplainer, interventional) on test, error and no-response
-    trials, background balanced over participant x category
+    trials; background from the training set, the same number of trials per
+    participant x category, ceil(--background-total / (participants x 3)),
+    drawn with replacement where a cell has fewer (sEEG: 500 in total), passed
+    as shap.maskers.Independent with max_samples = its size (no subsampling)
   - shuffle control: labels (with the stratification and weighting labels)
     rolled within participant by a shift, the whole fit repeated with the best
-    hyperparameters; test confusion matrices saved in batches
+    hyperparameters; test confusion matrices saved in batches. Shifts as in the
+    sEEG script: every shift 1..n-1 (n = smallest participant's correct
+    trials) cycled as often as fits, the rest filled with the smallest and
+    largest shifts (when n > --shuffles: the --shuffles/2 smallest and largest)
 
 Hyperparameter space: --space ephys uses the sEEG ranges unchanged; the
 default "fmri" keeps the same parameters with ranges that are feasible on
@@ -201,7 +207,7 @@ def fit_model(params, eval_fraction, X, y, groups, seed, n_jobs):
         X, y, groups, test_size=eval_fraction, stratify=y, random_state=seed)
     w_fit, w_eval = balanced_weights(g_fit, g_eval)
     model = xgb.XGBClassifier(**params, num_class=3, objective="multi:softprob", eval_metric="auc",
-                              tree_method="hist", n_jobs=n_jobs, random_state=seed)
+                              enable_categorical=False, tree_method="hist", n_jobs=n_jobs, random_state=seed)
     model.fit(fit_X, fit_y, verbose=False, sample_weight=w_fit, sample_weight_eval_set=[w_fit, w_eval],
               eval_set=[(fit_X, fit_y), (eval_X, eval_y)])
     return model
@@ -224,10 +230,25 @@ def shap_values(model, background, X) -> np.ndarray:
     import shap
     if len(X) == 0:
         return np.zeros((0, X.shape[1], 3), np.float32)
-    explainer = shap.TreeExplainer(model, data=background) if background is not None else shap.TreeExplainer(model)
+    if background is None:
+        explainer = shap.TreeExplainer(model)
+    else:                                         # as the sEEG script: masker without subsampling
+        explainer = shap.TreeExplainer(model, data=shap.maskers.Independent(background, max_samples=len(background)))
     v = explainer.shap_values(X)
     v = np.stack(v, -1) if isinstance(v, list) else np.asarray(v)          # -> trials x features x classes
     return v.astype(np.float32)
+
+
+def roll_shifts(n: int, n_shuffles: int) -> np.ndarray:
+    """Roll shifts as in the sEEG script (n = smallest participant's number of correct trials):
+    all shifts 1..n-1 as many whole times as fit, the rest the smallest and largest shifts."""
+    shifts = []
+    if n - 1 < n_shuffles:
+        while len(shifts) < n_shuffles - (n - 1):
+            shifts += list(range(1, n))
+    missing = n_shuffles - len(shifts)
+    shifts += list(range(1, int(np.ceil(missing / 2)) + 1)) + list(range(n - int(np.ceil(missing / 2)), n))
+    return np.array(shifts[:n_shuffles])
 
 
 def roll_within(values, subjects, shift):
@@ -269,12 +290,15 @@ def main():
                     help="stop the search after this many evaluations without improvement (sEEG: 50); 0 = no search")
     ap.add_argument("--max-evals", type=int, default=500, help="upper limit of hyperopt evaluations")
     ap.add_argument("--continue-search", action="store_true", help="continue the saved hyperopt Trials")
-    ap.add_argument("--background-per-cell", type=int, default=20,
-                    help="SHAP background: training trials per participant x category (0 = tree_path_dependent)")
+    ap.add_argument("--background-total", type=int, default=500,
+                    help="SHAP background size, split evenly over participant x category (sEEG: 500); "
+                         "0 = tree_path_dependent, no background")
     ap.add_argument("--no-shap", action="store_true")
     ap.add_argument("--shuffles", type=int, default=1000)
     ap.add_argument("--shuffle-batch", type=int, default=8)
     ap.add_argument("--keep-shuffle-models", action="store_true")
+    ap.add_argument("--redo-shuffles", action="store_true",
+                    help="recompute shuffle batches that already exist (default: resume)")
     ap.add_argument("--n-jobs", type=int, default=-1, help="threads per XGBoost fit")
     ap.add_argument("--max-trials-per-subject", type=int, help="random subset per participant (testing)")
     ap.add_argument("--quick", action="store_true",
@@ -382,12 +406,15 @@ def main():
 
     # ------------------------------------------------------------------ SHAP
     if not args.no_shap:
-        if args.background_per_cell:
+        if args.background_total:
+            per_cell = int(np.ceil(args.background_total / (len(np.unique(subjects)) * 3)))
             cells = pd.Series(train_g, index=range(len(train_g)))
-            idx = np.concatenate([np.random.default_rng(42).choice(
-                ix, args.background_per_cell, replace=len(ix) < args.background_per_cell)
-                for _, ix in cells.groupby(cells).groups.items()])
+            rng = np.random.default_rng(42)
+            idx = np.concatenate([rng.choice(ix, per_cell, replace=len(ix) < per_cell)
+                                  for _, ix in cells.groupby(cells).groups.items()])
             background = train_X.iloc[idx]
+            print(f"SHAP background: {per_cell} trials x {cells.nunique()} participant x category cells "
+                  f"= {len(background)}")
         else:
             background = None
         for label, x in (("test", test_X), ("error", error_df), ("unanswered", unanswered_df)):
@@ -398,13 +425,12 @@ def main():
 
     # ------------------------------------------------------------------ shuffle control
     if args.shuffles:
-        n_min = int(pd.Series(subjects).value_counts().min())
-        shifts = np.resize(np.random.default_rng(0).permutation(np.arange(1, n_min)), args.shuffles)
+        shifts = roll_shifts(int(pd.Series(subjects).value_counts().min()), args.shuffles)
         batches = int(np.ceil(args.shuffles / args.shuffle_batch))
         threads = max(1, (args.n_jobs if args.n_jobs > 0 else 4) // args.shuffle_batch)
         for b in range(batches):
             path = Path(f"{out}_shuffle_batch_{b}.pkl")
-            if path.exists():
+            if path.exists() and not args.redo_shuffles:
                 continue
             inds = range(b * args.shuffle_batch + 1, min((b + 1) * args.shuffle_batch, args.shuffles) + 1)
             res = Parallel(n_jobs=args.shuffle_batch)(delayed(shuffle_run)(
