@@ -43,6 +43,9 @@ def main():
     ap.add_argument("--color-max", type=float, required=True, help="colour scale (+-), e.g. the main flatmap's")
     ap.add_argument("--trials", nargs="+", choices=["test", "error"], default=["test", "error"],
                     help="trial sets to plot (the y range is shared between the sets given)")
+    ap.add_argument("--axes-height", type=float, default=3.2,
+                    help="height of the plot area in inches (3.2 = default; 1.6 halves it)")
+    ap.add_argument("--suffix", default="", help="appended to the output file names")
     ap.add_argument("--drop-recent-errors", action="store_true",
                     help="leave recent trials out of the error set (new and consolidated weighted 1/2, 1/2)")
     ap.add_argument("--out-dir", type=Path, default=HERE / "figures")
@@ -65,7 +68,9 @@ def main():
     norm = TwoSlopeNorm(0, -args.color_max, args.color_max)
 
     for trials, s in subj.items():
-        fig, ax = plt.subplots(figsize=(9, 4.2), facecolor="white")
+        H = args.axes_height + 1.1                     # inches: 0.5 above the axes, 0.6 below for the labels
+        fig, ax = plt.subplots(figsize=(9, H), facecolor="white")
+        fig.subplots_adjust(top=1 - 0.5 / H, bottom=0.6 / H)
         band_second_panel(ax, s, pd.DataFrame({"mean": s.mean()}), norm, DIVERGING, "Net signed SHAP (log-odds)",
                           None, whiskers=False)
         ax.set_ylim(lo - pad, hi + pad)
@@ -73,7 +78,7 @@ def main():
         if trials == "error" and args.drop_recent_errors:
             kind += " (recent left out)"
         ax.set_title(f"All regions: {C['title']}, {kind}  ({len(s)} subjects)", fontsize=11, color=INK, loc="left")
-        fig.text(0.07, -0.06,
+        fig.text(0.07, -0.25 / H,
                  f"{C['formula']} (sign flipped on {C['flipped']} trials; error trials: sign set by the true category); "
                  "\nper trial summed over all of the subject's features in each band/second, missing features left out; "
                  f"averaged within subject\n("
@@ -87,6 +92,7 @@ def main():
         if args.drop_recent_errors:
             stem = args.out_dir / (f"{C['prefix']}_band_second_errors_norecent_all" if trials == "error"
                                    else f"{C['prefix']}_band_second_all_sharedy")
+        stem = stem.with_name(stem.name + args.suffix)
         for ext in ("svg", "pdf", "png"):
             fig.savefig(stem.with_suffix(f".{ext}"), dpi=300, bbox_inches="tight")
         plt.close(fig)
