@@ -425,7 +425,13 @@ def main():
 
     # ------------------------------------------------------------------ shuffle control
     if args.shuffles:
-        shifts = roll_shifts(int(pd.Series(subjects).value_counts().min()), args.shuffles)
+        counts = pd.Series(subjects).value_counts()
+        shifts = roll_shifts(int(counts.min()), args.shuffles)
+        # no roll may leave a participant's labels in place (shift 0 or a multiple of its trial count)
+        bad = [(sh, s) for sh in np.unique(shifts) for s, n in counts.items() if sh % n == 0]
+        assert not bad, f"shifts that leave labels unchanged: {bad[:5]}"
+        print(f"roll shifts {shifts.min()}..{shifts.max()} ({len(np.unique(shifts))} distinct); trials per "
+              f"participant {counts.min()}..{counts.max()}, so every roll moves every participant's labels")
         batches = int(np.ceil(args.shuffles / args.shuffle_batch))
         threads = max(1, (args.n_jobs if args.n_jobs > 0 else 4) // args.shuffle_batch)
         for b in range(batches):
