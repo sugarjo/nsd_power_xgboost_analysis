@@ -170,9 +170,9 @@ def make_space(kind: str, min_eval_fraction: float) -> dict:
             "learning_rate": hp.loguniform("learning_rate", np.log(0.005), np.log(0.5)),
             "early_stopping_rounds": hp.quniform("early_stopping_rounds", 20, 300, 1),
             "n_estimators": hp.quniform("n_estimators", 50, 4000, 1),
-            "max_delta_step": hp.uniform("max_delta_step", 0, 10),
+            "max_delta_step": hp.uniform("max_delta_step", 0, 10), #increase to 20
             "max_leaves": hp.qloguniform("max_leaves", np.log(2), np.log(512), 1),
-            "max_bin": hp.qloguniform("max_bin", np.log(16), np.log(512), 1),
+            "max_bin": hp.qloguniform("max_bin", np.log(16), np.log(512), 1), #increase to 600
         }
     return space
 
