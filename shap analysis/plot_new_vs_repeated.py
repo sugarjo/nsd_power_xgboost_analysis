@@ -312,8 +312,9 @@ def band_second_panel(ax, subj: pd.DataFrame, stats: pd.DataFrame, norm, cmap=DI
     ax.set_xlim(-0.6, len(BANDS) - 0.4)
     ax.set_xticks(x, [f"{sec} s" for _, sec in ticks], fontsize=7, color=INK_MUTED)
     for i, band in enumerate(BANDS):
-        ax.text(i, -0.1, BAND_LABELS.get(band, band), transform=ax.get_xaxis_transform(),
-                ha="center", va="top", fontsize=9, color=INK)
+        # fixed distance below the axis (in points), so short panels keep the labels apart
+        ax.annotate(BAND_LABELS.get(band, band), (i, 0), xycoords=ax.get_xaxis_transform(), xytext=(0, -17),
+                    textcoords="offset points", ha="center", va="top", fontsize=9, color=INK)
     ax.set_ylabel(ylabel, fontsize=8, color=INK)
     ax.set_title("B   Frequency bands, split by second", fontsize=10, color=INK, loc="left")
 
@@ -343,6 +344,12 @@ def main():
     ap.add_argument("--parcel-mean", action="store_true",
                     help="average (not sum) over parcels: within each merged region for the map, over all of the "
                          "patient's parcels for the band x second bars")
+    ap.add_argument("--drop-recent-errors", action="store_true",
+                    help="error trials: leave the (few) recent trials out; new vs repeated weights new and old 1/2, "
+                         "1/2, recent vs consolidated uses the consolidated error trials only")
+    ap.add_argument("--trial-types", nargs="+", choices=["new", "recent", "old"],
+                    help="use only these trial types (equal weights), e.g. old = consolidated trials only")
+    ap.add_argument("--map-only", action="store_true", help="also write panel A (flatmap) on its own (<name>_map)")
     ap.add_argument("--no-stats", action="store_true", help="bars and subject dots only: no CI whiskers, no stars")
     ap.add_argument("--fdr", type=float, default=0.05, help="FDR level for the band x second tests (signed measure)")
     ap.add_argument("--contrast", choices=list(CONTRASTS), default="new_vs_repeated")
@@ -356,6 +363,18 @@ def main():
     suffix += "".join(f"_without_{e}" for e in args.exclude if f"_without_{e}" not in suffix)
     suffix += "_parcelmean" if args.parcel_mean else ""
     C = CONTRASTS[args.contrast]
+    if args.drop_recent_errors and args.trials == "error":   # too few recent error trials
+        C = dict(C)
+        if args.contrast == "new_vs_repeated":
+            C["weights"], C["balance"] = {"new": 0.5, "old": 0.5}, "new and old weighted 1/2, 1/2; recent error trials left out"
+        else:
+            C["weights"], C["balance"] = {"old": 1.0}, "consolidated (old) error trials only; recent error trials left out"
+        suffix += "_norecent"
+    if args.trial_types:                                     # e.g. consolidated trials only, for comparison
+        C = dict(C)
+        C["weights"] = {t: 1 / len(args.trial_types) for t in args.trial_types}
+        C["balance"] = " and ".join(args.trial_types) + " trials only" + (", equal weights" if len(args.trial_types) > 1 else "")
+        suffix += "_only" + "".join(args.trial_types)
     prefix = C["prefix"]
 
     out = signed_shap(pd.read_pickle(args.pkl), args.contrast, args.trials)
@@ -498,6 +517,20 @@ def main():
         for ext in ("svg", "pdf"):
             fig.savefig(path.with_suffix(f".{ext}"), dpi=args.svg_dpi, bbox_inches="tight")
         print("wrote", path.with_suffix(".svg"), "and .pdf")
+    if args.map_only:             # panel A (flatmap, labels, colour bar) on its own
+        from matplotlib.transforms import Bbox
+        for t in [fig._suptitle, ax.title, ax._left_title, ax._right_title] + list(fig.texts):   # no titles or footer
+            if t is not None:
+                t.set_visible(False)
+        fig.canvas.draw()
+        box = Bbox.union([ax.get_window_extent()] +
+                         [c.get_tightbbox(fig.canvas.get_renderer()) for c in ax.child_axes])
+        box = box.transformed(fig.dpi_scale_trans.inverted()).padded(0.08)
+        map_path = path.with_name(path.stem + "_map.png")
+        exts = ("png", "svg", "pdf") if args.svg else ("png",)
+        for ext in exts:
+            fig.savefig(map_path.with_suffix(f".{ext}"), dpi=args.svg_dpi if ext != "png" else 300, bbox_inches=box)
+        print("wrote", map_path.with_suffix(".svg" if args.svg else ".png"))
 
 
 if __name__ == "__main__":
