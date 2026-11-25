@@ -50,6 +50,8 @@ def main():
     ap.add_argument("--hours", type=float, default=3.0, help="recent/consolidated boundary")
     ap.add_argument("--session-gap", type=float, default=1.0, help="session break, hours")
     ap.add_argument("--exclude", nargs="+", default=["CNP21"], help="participants left out (default CNP21)")
+    ap.add_argument("--flip-sessions", nargs="+", default=[], metavar="SUBJECT:S1,S2",
+                    help="swap old/new answers in these sessions (0-based, split at --session-gap), e.g. CNP09:6,7,8")
     ap.add_argument("--measure", choices=["adjusted", "dprime"], default="adjusted")
     ap.add_argument("--out-dir", type=Path, default=HERE / "output")
     args = ap.parse_args()
@@ -57,6 +59,12 @@ def main():
 
     t = seeg_trials(args.seeg, args.session_gap, args.exclude)
     t = t[t.said_old.notna()]
+    flipped = []
+    for spec in args.flip_sessions:                    # e.g. CNP09:6,7,8 -> old/new answers swapped
+        subject, sessions = spec.split(":")
+        sel = (t.subject == subject) & t.session.isin([int(x) for x in sessions.split(",")])
+        t.loc[sel, "said_old"] = 1 - t.loc[sel, "said_old"]
+        flipped.append(f"{subject} sessions {sessions}")
     t["type"] = np.where(t.isold == 0, "new", np.where(t.lag_s > args.hours * 3600, "consolidated", "recent"))
     key = ["subject", "session"]
     if args.measure == "dprime":
@@ -81,7 +89,8 @@ def main():
         })
     subj = sess.groupby("subject").mean()
     counts = t.groupby(["subject", "type"]).size().unstack()
-    name = "behaviour_dprime" if args.measure == "dprime" else "behaviour_adjusted_hit_rate"
+    name = ("behaviour_dprime" if args.measure == "dprime" else "behaviour_adjusted_hit_rate") + \
+        ("_flipped" if flipped else "")
     subj.join(counts.add_prefix("n_trials_")).to_csv(args.out_dir / f"{name}.csv")
 
     order = ["new", "recent", "consolidated"]
@@ -114,6 +123,15 @@ def main():
         fig.savefig(stem.with_suffix(f".{ext}"), dpi=300, bbox_inches="tight")
     print("wrote", stem.with_suffix(".svg"))
     print(pd.DataFrame({"mean": mean, "sem": sem}).round(3).to_string())
+    from scipy import stats
+    for a_, b_ in (("recent", "consolidated"), ("recent", "new"), ("new", "consolidated")):
+        r = stats.ttest_rel(subj[a_], subj[b_])
+        print(f"{a_} vs {b_}: t({len(subj) - 1}) = {r.statistic:.2f}, p = {r.pvalue:.2g}")
+    for k in order:
+        r = stats.ttest_1samp(subj[k], 0)
+        print(f"{k} > 0: t = {r.statistic:.2f}, p = {r.pvalue:.2g}")
+    if flipped:
+        print("answers swapped:", "; ".join(flipped))
 
 
 if __name__ == "__main__":
