@@ -1,0 +1,9 @@
+[
+  ["31pd+31pv+31a+d23ab", "GammaH", 1],
+  ["POS1+v23ab+POS2", "GammaH", 1],
+  [["POS1+v23ab+POS2", "31pd+31pv+31a+d23ab"], "GammaH", 1],
+  ["8C+PEF+p9-46v+IFSp", "GammaH", [1, 2]],
+  [["PHA3", "FFC+VVC+PH", "TE2p"], "Delta", 2],
+  ["Hippocampus-anterior", "GammaH", 2],
+  ["TE2p", "Theta", [1, 2]]
+]
