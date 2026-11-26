@@ -5,10 +5,11 @@ shuffled model (labels rolled within patient, model refitted with the best
 hyperparameters; rows = true label, columns = predicted), and the real model's
 summary (fig_model_performance.csv from fig_model_performance.py).
 
-A  Mean over shuffles of each row as % of that true label's trials (± SD over
-   shuffles below), on the same colour scale as the real confusion matrix.
-B  Null distributions of accuracy and balanced accuracy, with the real model's
-   value; p = (1 + number of shuffles >= real) / (1 + number of shuffles).
+One confusion matrix: per cell the mean over shuffles of that cell as % of the
+true label's trials, and the 95th percentile over shuffles; same colour scale as
+the real confusion matrix. Below: accuracy and balanced accuracy of the shuffles
+(mean, 95th percentile) against the real model;
+p = (1 + number of shuffles >= real) / (1 + number of shuffles).
 
 Written to --out-dir: fig_shuffle_performance.{svg,pdf,png,csv}
 """
@@ -49,18 +50,15 @@ def main():
     real = pd.read_csv(args.real, index_col=0).loc["test"]
     n = len(cms)
 
-    fig = plt.figure(figsize=(10.5, 3.9), facecolor="white")
-    gs = fig.add_gridspec(1, 3, width_ratios=[1, 1.05, 1.05], wspace=0.45, left=0.07, right=0.98, top=0.8,
-                          bottom=0.17)
-    ax = fig.add_subplot(gs[0])
-    mean, sd = pct.mean(0), pct.std(0)
+    fig, ax = plt.subplots(figsize=(4.4, 4.2), facecolor="white")
+    mean, p95 = pct.mean(0), np.percentile(pct, 95, axis=0)
     ax.imshow(mean, cmap=CMAP, vmin=0, vmax=70)
     for i in range(3):
         for j in range(3):
             c = "white" if mean[i, j] > 45 else INK
-            ax.text(j, i - 0.08, f"{mean[i, j]:.0f}%", ha="center", va="center", fontsize=10, color=c,
+            ax.text(j, i - 0.1, f"{mean[i, j]:.0f}%", ha="center", va="center", fontsize=10, color=c,
                     fontweight="bold" if i == j else "normal")
-            ax.text(j, i + 0.22, f"± {sd[i, j]:.0f}", ha="center", va="center", fontsize=6.5, color=c)
+            ax.text(j, i + 0.22, f"95th: {p95[i, j]:.0f}%", ha="center", va="center", fontsize=6.5, color=c)
     ax.set_xticks(range(3), NAMES, fontsize=8, color=INK)
     ax.set_yticks(range(3), NAMES, fontsize=8, color=INK)
     ax.xaxis.set_label_position("top")
@@ -68,43 +66,22 @@ def main():
     ax.set_xlabel("Predicted label", fontsize=8.5, color=INK)
     ax.set_ylabel("True (shuffled) label", fontsize=8.5, color=INK)
     ax.tick_params(length=0)
-    for s in ax.spines.values():
-        s.set_visible(False)
-    ax.set_title(f"A   Shuffled models (mean of {n})", loc="left", fontsize=10, color=INK, pad=28)
-    ax.text(0, -0.06, f"accuracy {acc.mean():.1%} · balanced {bal.mean():.1%} (means over shuffles)\n"
-            "% of each true label's test trials; ± SD over shuffles", transform=ax.transAxes, ha="left", va="top",
-            fontsize=7, color=INK_MUTED)
+    for sp in ax.spines.values():
+        sp.set_visible(False)
+    ax.set_title(f"Shuffled models (n = {n})", loc="left", fontsize=10, color=INK, pad=30)
 
-    rows = {}
-    for k, (name, null, r) in enumerate((("Accuracy", acc, real.accuracy),
-                                         ("Balanced accuracy", bal, real.balanced_accuracy))):
-        ax = fig.add_subplot(gs[k + 1])
+    rows, lines = {}, []
+    for name, null, r in (("Accuracy", acc, real.accuracy), ("Balanced accuracy", bal, real.balanced_accuracy)):
         p = (1 + np.sum(null >= r)) / (1 + n)
-        lo = min(null.min(), 1 / 3) - 0.02
-        bins = np.linspace(lo, max(null.max(), r) + 0.02, 45)
-        ax.hist(null, bins=bins, color="#b9b9b9", edgecolor="white", lw=0.4)
-        ax.axvline(1 / 3, color=INK_MUTED, ls=":", lw=1)
-        ax.axvline(np.percentile(null, 95), color=INK_MUTED, ls="--", lw=0.9)
-        ax.axvline(r, color="#d03030", lw=2)
-        top = ax.get_ylim()[1]
-        ax.text(r, top * 0.97, f" real\n {r:.1%}", color="#d03030", fontsize=8, ha="left", va="top")
-        ax.text(1 / 3, top * 0.97, "chance ", color=INK_MUTED, fontsize=7, ha="right", va="top")
-        ax.text(np.percentile(null, 95), top * 0.75, " 95th\n percentile", color=INK_MUTED, fontsize=6.5,
-                ha="left", va="top")
-        ax.set_xlabel(name, fontsize=8.5, color=INK)
-        ax.set_ylabel("Shuffles" if k == 0 else "", fontsize=8.5, color=INK)
-        ax.xaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.0%}"))
-        ax.tick_params(labelsize=7, colors=INK_MUTED)
-        for s in ("top", "right"):
-            ax.spines[s].set_visible(False)
-        for s in ("left", "bottom"):
-            ax.spines[s].set_color(AXIS)
-        ax.grid(axis="y", color=GRID, lw=0.5)
-        ax.set_axisbelow(True)
-        ax.set_title(f"{'BC'[k]}   {name}: p = {p:.3f}" + (" (minimum)" if np.sum(null >= r) == 0 else ""),
-                     loc="left", fontsize=10, color=INK)
         rows[name] = dict(real=r, null_mean=null.mean(), null_sd=null.std(), null_p95=np.percentile(null, 95),
                           null_max=null.max(), n_shuffles=n, n_ge_real=int(np.sum(null >= r)), p=p)
+        lines.append(f"{name.lower()}: shuffled mean {null.mean():.1%}, 95th percentile {np.percentile(null, 95):.1%}; "
+                     f"real {r:.1%}, p {'≤' if np.sum(null >= r) == 0 else '='} {p:.3f}")
+    ax.text(0, -0.05, "Cells: mean over shuffles of each true label's test trials (%), with the 95th percentile.\n"
+            + "\n".join(lines), transform=ax.transAxes, ha="left", va="top", fontsize=6.5, color=INK_MUTED)
+    cell = pd.DataFrame([dict(true=NAMES[i], predicted=NAMES[j], mean_pct=mean[i, j], p95_pct=p95[i, j])
+                         for i in range(3) for j in range(3)])
+    cell.to_csv(args.out_dir / "fig_shuffle_performance_cells.csv", index=False)
 
     stem = args.out_dir / "fig_shuffle_performance"
     pd.DataFrame(rows).T.to_csv(stem.with_suffix(".csv"))
