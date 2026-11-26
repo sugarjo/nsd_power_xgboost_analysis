@@ -71,7 +71,8 @@ def main():
                                   "second": sec, "value": v.to_numpy()}))
     long = pd.concat(rows, ignore_index=True)
     tag = "_".join(re.sub(r"[^A-Za-z0-9]+", "", p) for p in args.parcels)
-    stem = args.out_dir / f"feature_distribution_{args.band}_{tag}{'_test' if args.test_only else ''}"
+    sec_tag = "_s" + "".join(map(str, args.seconds)) if args.seconds != [1, 2] else ""
+    stem = args.out_dir / f"feature_distribution_{args.band}_{tag}{'_test' if args.test_only else ''}{sec_tag}"
     long.to_csv(stem.with_suffix(".csv"), index=False)
 
     per = long.groupby(["second", "subject", "category"]).value.mean().unstack("category")
@@ -116,12 +117,15 @@ def main():
     counts = long[long.second == args.seconds[0]].category.value_counts()
     fig.suptitle(f"{' + '.join(args.parcels)}: correct trials ({n_subj} patients)", fontsize=10.5, color=INK,
                  x=0.02, ha="left", y=1.03)
-    fig.text(0.02, -0.04,
+    import textwrap
+    width_chars = int(fig.get_figwidth() * 19)
+    fig.text(0.02, -0.04, "\n".join(textwrap.fill(part, width_chars) for part in (
              f"Per trial the feature averaged over the listed parcels the patient has. Violins: all "
              f"{'test-set ' if args.test_only else ''}correct trials pooled (n = "
              + ", ".join(f"{TYPES[c][0].lower()} {counts.get(c, 0)}" for c in TYPES)
-             + f"; y range {lo:.1f} to {hi:.1f} {args.unit}, the {100 - args.clip:g}–{args.clip:g}th percentiles).\nBars: mean over patients of each patient's mean ± s.e.m.; "
-               "dots = patients, lines join each patient's values.",
+             + f"; y range {lo:.1f} to {hi:.1f} {args.unit}, the {100 - args.clip:g}–{args.clip:g}th percentiles).",
+             "Bars: mean over patients of each patient's mean ± s.e.m.; "
+             "dots = patients, lines join each patient's values.")),
              fontsize=6.5, color=INK_MUTED, va="top")
     for ext in ("svg", "pdf", "png"):
         fig.savefig(stem.with_suffix(f".{ext}"), dpi=300, bbox_inches="tight")
