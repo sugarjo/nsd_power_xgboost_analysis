@@ -1,3 +1,9 @@
-version https://git-lfs.github.com/spec/v1
-oid sha256:a01477f2b45be767157f387bbbb9e0ec5686d08fe818262f38f1b6dd93e75bce
-size 302
+[
+  ["31pd+31pv+31a+d23ab", "GammaH", 1],
+  ["POS1+v23ab+POS2", "GammaH", 1],
+  [["POS1+v23ab+POS2", "31pd+31pv+31a+d23ab"], "GammaH", 1],
+  ["8C+PEF+p9-46v+IFSp", "GammaH", [1, 2]],
+  [["PHA3", "FFC+VVC+PH", "TE2p"], "Delta", 2],
+  ["Hippocampus-anterior", "GammaH", 2],
+  ["TE2p", "Theta", [1, 2]]
+]
