@@ -283,7 +283,9 @@ def band_second_panel(ax, subj: pd.DataFrame, stats: pd.DataFrame, norm, cmap=DI
     and the "1 s" / "2 s" tick under each bar, with the band name below."""
     width, gap = 0.36, 0.04
     x, ticks = [], []
-    for i, band in enumerate(BANDS):
+    present = set(stats.index.get_level_values(0))
+    bands = [b for b in BANDS if b in present]          # only the bands in the data (e.g. --bands)
+    for i, band in enumerate(bands):
         for sec, off in ((1, -(width + gap) / 2), (2, (width + gap) / 2)):
             x.append(i + off)
             ticks.append((band, sec))
@@ -309,9 +311,9 @@ def band_second_panel(ax, subj: pd.DataFrame, stats: pd.DataFrame, norm, cmap=DI
                         ha="center", va="bottom", fontsize=9, color=INK)
         ax.set_ylim(top=top * 1.12)
     style_axis(ax)
-    ax.set_xlim(-0.6, len(BANDS) - 0.4)
+    ax.set_xlim(-0.6, len(bands) - 0.4)
     ax.set_xticks(x, [f"{sec} s" for _, sec in ticks], fontsize=7, color=INK_MUTED)
-    for i, band in enumerate(BANDS):
+    for i, band in enumerate(bands):
         # fixed distance below the axis (in points), so short panels keep the labels apart
         ax.annotate(BAND_LABELS.get(band, band), (i, 0), xycoords=ax.get_xaxis_transform(), xytext=(0, -17),
                     textcoords="offset points", ha="center", va="top", fontsize=9, color=INK)
@@ -354,6 +356,7 @@ def main():
     ap.add_argument("--fdr", type=float, default=0.05, help="FDR level for the band x second tests (signed measure)")
     ap.add_argument("--contrast", choices=list(CONTRASTS), default="new_vs_repeated")
     ap.add_argument("--exclude", nargs="+", default=[], metavar="SUBJECT", help="subjects left out")
+    ap.add_argument("--bands", nargs="+", help="only these frequency bands, e.g. GammaL GammaH Ripple")
     args = ap.parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)
     absolute = args.measure == "abs"
@@ -362,6 +365,7 @@ def main():
         suffix += args.merged.stem[len("merged_regions"):]
     suffix += "".join(f"_without_{e}" for e in args.exclude if f"_without_{e}" not in suffix)
     suffix += "_parcelmean" if args.parcel_mean else ""
+    suffix += ("_" + "".join(args.bands)) if args.bands else ""
     C = CONTRASTS[args.contrast]
     if args.drop_recent_errors and args.trials == "error":   # too few recent error trials
         C = dict(C)
@@ -379,6 +383,12 @@ def main():
 
     out = signed_shap(pd.read_pickle(args.pkl), args.contrast, args.trials)
     values, missing = (out["contrast"] if absolute else out["signed"]), out["missing"]
+    if args.bands:                                  # keep only the chosen bands
+        unknown = set(args.bands) - set(values.columns.get_level_values("band"))
+        if unknown:
+            raise SystemExit(f"unknown band(s) {sorted(unknown)}")
+        keep = values.columns.get_level_values("band").isin(args.bands)
+        values, missing = values.loc[:, keep], missing.loc[:, keep]
     if args.exclude:
         keep = ~values.index.get_level_values("subject").isin(args.exclude)
         if keep.all():
