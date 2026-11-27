@@ -37,6 +37,7 @@ from plot_new_vs_repeated import AXIS, GRID, INK, INK_MUTED  # noqa: E402
 plt.rcParams.update({"svg.fonttype": "none", "pdf.fonttype": 42})
 NAMES = ["New", "Recent", "Consolidated"]
 CMAP = LinearSegmentedColormap.from_list("seq", ["#ffffff", "#cfe0f5", "#6fa3e0", "#2a78d6", "#123f7a"])
+UNIT = "patient"
 SET_COL = {"test": "#2a78d6", "error": "#eb6834"}
 
 
@@ -86,7 +87,7 @@ def matrix_panel(ax, df, proba, title):
     acc = (df.y == df.pred).mean()
     auc = roc_auc_score(df.y, proba, multi_class="ovo", average="macro", labels=[0, 1, 2])
     draw_matrix(ax, cm, title, f"accuracy {acc:.1%} · balanced {balanced(df.y, df.pred):.1%} · AUC {auc:.2f}\n"
-                f"{len(df)} trials, {df.subject.nunique()} patients")
+                f"{len(df)} trials, {df.subject.nunique()} {UNIT}s")
     return dict(accuracy=acc, balanced_accuracy=balanced(df.y, df.pred), auc=auc, n=len(df))
 
 
@@ -108,11 +109,35 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--pkl", type=Path, default=REPO / "random_data_bipolar_xgboost_3w.pkl")
     ap.add_argument("--out-dir", type=Path, default=HERE / "output")
+    ap.add_argument("--correct-error-only", action="store_true",
+                    help="only the correct (test) and error confusion matrices, side by side")
+    ap.add_argument("--name", default="fig_model_performance", help="output file name (without extension)")
+    ap.add_argument("--unit", default="patient", help="word for one subject in titles, e.g. participant")
     args = ap.parse_args()
+    global UNIT
+    UNIT = args.unit
     args.out_dir.mkdir(parents=True, exist_ok=True)
     data = pd.read_pickle(args.pkl)
     test, p_test = predictions(data, "test_data")
     err, p_err = predictions(data, "error_data")
+    if args.correct_error_only:
+        fig = plt.figure(figsize=(8.6, 4.3), facecolor="white")
+        gs = fig.add_gridspec(1, 2, wspace=0.5, left=0.12, right=0.98, top=0.82, bottom=0.2)
+        summary = {"test": matrix_panel(fig.add_subplot(gs[0]), test, p_test, "A   Correct trials (test set)"),
+                   "error": matrix_panel(fig.add_subplot(gs[1]), err, p_err, "B   Error trials")}
+        cax = fig.add_axes([0.12, 0.04, 0.35, 0.025])
+        cb = fig.colorbar(plt.cm.ScalarMappable(cmap=CMAP, norm=plt.Normalize(0, 70)), cax=cax,
+                          orientation="horizontal")
+        cb.outline.set_visible(False)
+        cb.ax.tick_params(labelsize=7, colors=INK_MUTED, length=0)
+        cb.set_label("% of the true label's trials (chance 33%)", fontsize=7.5, color=INK)
+        stem = args.out_dir / args.name
+        pd.DataFrame(summary).T.to_csv(stem.with_suffix(".csv"))
+        for ext in ("svg", "pdf", "png"):
+            fig.savefig(stem.with_suffix(f".{ext}"), dpi=300, bbox_inches="tight")
+        print("wrote", stem.with_suffix(".svg"))
+        print(pd.DataFrame(summary).T.round(3).to_string())
+        return
     train, _ = predictions(data, "train_data")
     unans, p_unans = predictions(data, "unanswered_data")
 
@@ -154,7 +179,7 @@ def main():
     ax.grid(axis="y", color=GRID, lw=0.5)
     ax.set_axisbelow(True)
     ax.legend(fontsize=7, frameon=False, loc="upper left")
-    ax.set_title("E   Per patient", loc="left", fontsize=10, color=INK)
+    ax.set_title(f"E   Per {args.unit}", loc="left", fontsize=10, color=INK)
 
     cax = fig.add_axes([0.6, 0.25, 0.3, 0.02])
     cb = fig.colorbar(plt.cm.ScalarMappable(cmap=CMAP, norm=plt.Normalize(0, 70)), cax=cax, orientation="horizontal")
@@ -162,9 +187,9 @@ def main():
     cb.ax.tick_params(labelsize=7, colors=INK_MUTED, length=0)
     cb.set_label("% of the true label's trials (chance 33%)", fontsize=7.5, color=INK)
 
-    stem = args.out_dir / "fig_model_performance"
+    stem = args.out_dir / args.name
     pd.DataFrame(summary).T.to_csv(stem.with_suffix(".csv"))
-    per.to_csv(args.out_dir / "fig_model_performance_per_patient.csv")
+    per.to_csv(args.out_dir / f"{args.name}_per_patient.csv")
     for ext in ("svg", "pdf", "png"):
         fig.savefig(stem.with_suffix(f".{ext}"), dpi=300, bbox_inches="tight")
     print("wrote", stem.with_suffix(".svg"))
