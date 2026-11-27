@@ -54,6 +54,11 @@ CONTRASTS = {
         call="recent/consolidated", flipped="recent", weights={"recent": 0.5, "old": 0.5},
         balance="recent and consolidated weighted 1/2, 1/2; new trials left out",
         formula="SHAP(consolidated) − SHAP(recent)"),
+    "new_vs_consolidated": dict(
+        prefix="new_vs_consolidated", title="new vs consolidated (old)", short="new − consolidated",
+        call="new/consolidated", flipped="consolidated", weights={"new": 0.5, "old": 0.5},
+        balance="new and consolidated weighted 1/2, 1/2; recent trials left out",
+        formula="SHAP(new) − SHAP(consolidated)"),
 }
 
 
@@ -101,6 +106,11 @@ def signed_shap(data: dict, contrast: str = "new_vs_repeated", trials: str = "te
         shap, test, category, original = shap[keep], test[keep], category[keep], original[keep]
         value = shap[..., OLD] - shap[..., RECENT]
         positive = category == 3
+    elif contrast == "new_vs_consolidated":
+        keep = np.isin(category, [1, 3])                  # new and old (consolidated) trials
+        shap, test, category, original = shap[keep], test[keep], category[keep], original[keep]
+        value = shap[..., NEW] - shap[..., OLD]
+        positive = category == NEW_CATEGORY
     else:
         raise ValueError(f"unknown contrast {contrast!r}")
     signed = np.where(positive[:, None], value, -value)

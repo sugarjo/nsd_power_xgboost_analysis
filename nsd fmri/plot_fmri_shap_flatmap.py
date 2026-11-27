@@ -50,6 +50,8 @@ def main():
     ap.add_argument("--pkl", type=Path, required=True, help="xgb_fmri.py output pickle")
     ap.add_argument("--cache", type=Path, default=REPO / "data" / "fsaverage")
     ap.add_argument("--n-labels", type=int, default=6)
+    ap.add_argument("--contrasts", nargs="+", choices=list(CONTRASTS),
+                    default=["new_vs_repeated", "recent_vs_consolidated"], help="one panel per contrast")
     ap.add_argument("--tag", default="", help="added to the output names")
     ap.add_argument("--out-dir", type=Path, default=HERE / "figures")
     args = ap.parse_args()
@@ -57,13 +59,13 @@ def main():
 
     data = pd.read_pickle(args.pkl)
     geo = load_flatmap(args.cache)
-    contrasts = ["new_vs_repeated", "recent_vs_consolidated"]
+    contrasts = args.contrasts
     subj = {c: parcel_values(data, c) for c in contrasts}
     cols = subj[contrasts[0]].columns
     split = all(c[:2] in ("L_", "R_") for c in cols)
     rows = [("Left hemisphere", "L_"), ("Right hemisphere", "R_")] if split else [("Hemispheres pooled", "")]
 
-    fig, axes = plt.subplots(len(rows), 2, figsize=(13, 5.2 * len(rows)), facecolor="white", squeeze=False,
+    fig, axes = plt.subplots(len(rows), len(contrasts), figsize=(6.6 * len(contrasts) + 0.2, 5.2 * len(rows)), facecolor="white", squeeze=False,
                              gridspec_kw=dict(wspace=0.05, hspace=0.25))
     for j, c in enumerate(contrasts):
         s = subj[c]
@@ -83,6 +85,8 @@ def main():
             cax = ax.inset_axes([0.55, -0.06, 0.4, 0.03])
             cb = fig.colorbar(plt.cm.ScalarMappable(norm=norm, cmap=DIVERGING), cax=cax, orientation="horizontal")
             cb.outline.set_visible(False)
+            cb.set_ticks([-vmax, -vmax / 2, 0, vmax / 2, vmax])
+            cb.set_ticklabels([f"{t:.3f}" for t in (-vmax, -vmax / 2, 0, vmax / 2, vmax)])
             cb.ax.tick_params(labelsize=7, colors=INK_MUTED, length=0)
             cb.set_label(f"Net signed SHAP (log-odds); > 0 helps the correct {CONTRASTS[c]['call']} call",
                          fontsize=7.5, color=INK)
@@ -99,7 +103,7 @@ def main():
              "weights, then across participants. "
              + ("Left and right parcels were separate features." if split else
                 "Features were the average of the left and right parcel (xgb_fmri.py --hemispheres mean), so one "
-                "value per parcel is shown on the left flatmap."), 190),
+                "value per parcel is shown on the left flatmap."), 95 * len(contrasts)),
              fontsize=7.5, color=INK_MUTED, va="top")
     stem = args.out_dir / f"fmri_shap_flatmap{'_' + args.tag if args.tag else ''}"
     for ext in ("svg", "pdf", "png"):
