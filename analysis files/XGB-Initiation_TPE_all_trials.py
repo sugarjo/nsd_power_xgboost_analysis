@@ -28,7 +28,7 @@ from matplotlib import pyplot as plt
 
 
 # CNP04 should be first to set up the image structure- #CNP11 not included because of previous surgery. CNP13 excluded because of few old trials. CNP21 has a lot of premature button presses
-subjects = ['CNP04', 'CNP21', 'CNP05', 'CNP08', 'CNP09', 'CNP10', 'CNP12',
+subjects = ['CNP04', 'CNP05', 'CNP08', 'CNP09', 'CNP10', 'CNP12',
             'CNP14', 'CNP18', 'CNP19', 'CNP20', 'CNP22', 'CNP26', 'CNP27', 'CNP28', 'CNP29']
 
 # bands = ['Delta1', 'Delta2',
@@ -52,9 +52,9 @@ frequency_cutoffs = [(1, 4),
                      (128, 256)]
 
 continue_hyperparam_search = False
-override_old = True
+override_old = False
 bipolar = True
-hyperparams_iterations = 50#50
+hyperparams_iterations = []#50#50
 
 
 button_limit = 2.25
@@ -127,7 +127,7 @@ def objective(space):
     # feature_weights = overall_gm_feature_weights + [image_weight]
 
     model = xgb.XGBClassifier(
-        **pars, num_class=len(unique_y), objective="multi:softprob", eval_metric="auc")
+        **pars, num_class=len(unique_y), objective="multi:softprob", eval_metric="auc", enable_categorical=False)
 
     model.fit(fit_X, fit_y, verbose=False, sample_weight=fit_sample_weight, sample_weight_eval_set=(fit_sample_weight, eval_sample_weight),
               eval_set=[(fit_X, fit_y), (eval_X, eval_y)])
@@ -191,7 +191,7 @@ def shuffle_models(ind, shift):
         s_eval_sample_weight.append(s_class_weights[which_class])
 
     shuffled_model = xgb.XGBClassifier(
-        **best_hyperparams, num_class=3, objective="multi:softprob", eval_metric="auc")
+        **best_hyperparams, num_class=3, objective="multi:softprob", eval_metric="auc", enable_categorical=False)
 
     shuffled_model.fit(s_fit_X, s_fit_y, verbose=False, sample_weight=s_fit_sample_weight, sample_weight_eval_set=(s_fit_sample_weight, s_eval_sample_weight),
                        eval_set=[(s_fit_X, s_fit_y), (s_eval_X, s_eval_y)])
@@ -703,7 +703,7 @@ for y in eval_subject_categories:
 
 if not 'saved_model' in locals() or not saved_model["models"]["xgboost"]:
     model = xgb.XGBClassifier(**best_hyperparams, num_class=3,
-                              objective="multi:softprob", eval_metric="auc")
+                              objective="multi:softprob", eval_metric="auc", enable_categorical=False)
     
     model.fit(fit_X, fit_y, verbose=False, sample_weight=fit_sample_weight, sample_weight_eval_set=(fit_sample_weight, eval_sample_weight),
               eval_set=[(fit_X, fit_y), (eval_X, eval_y)])
@@ -855,15 +855,16 @@ else:
 background_data = []
 
 
-target_n = train_X.groupby(level=["subject", "image_category"]).size().max()
-
+#target_n = train_X.groupby(level=["subject", "image_category"]).size().max()
+#will give more than 100 trials for background data
+target_n = int(np.ceil(500/(len(subjects)*3)))
 for subject_ind, subject in enumerate(subjects):
     
     #print(subject)
     
     subject_df = train_X.xs(subject, level="subject")
     # Find the largest category count for this subject
-    target_n = max(subject_df.groupby(level="image_category").size())
+    #target_n = max(subject_df.groupby(level="image_category").size())
 
     for category, category_df in subject_df.groupby(
         level="image_category", sort=False):
@@ -877,10 +878,20 @@ for subject_ind, subject in enumerate(subjects):
 background_df = pd.concat(background_data)    
     
 if not "test_shap_values" in summary["models"].keys():
+
+    #save first so we don't have recalculate everything next time
+    with open(os.path.join(savedir, 'real_data_' + model_filename), 'wb') as handle:
+        pickle.dump(summary, handle,)
+
     print('Calculate shap values on test data')
         
     # calculate shap values
-    explainer = shap.TreeExplainer(model, data=background_df)
+    background_masker = shap.maskers.Independent(
+    background_df,
+    max_samples=len(background_df)
+        )
+    
+    explainer = shap.TreeExplainer(model, data=background_masker)
     summary["models"]["test_shap_values"] = np.array(explainer.shap_values(test_X))#, check_additivity=False))
     
     with open(os.path.join(savedir, 'real_data_' + model_filename), 'wb') as handle:
@@ -926,27 +937,27 @@ exists = True
 
 shuffles_per_batch = 8
 
-while exists:
-    batch_name = f'batch_{done_batches}_shuffle_shap_'
+# while exists:
+#     batch_name = f'batch_{done_batches}_shuffle_shap_'
     
-    batch_filepath = os.path.join(savedir, batch_name + model_filename)
+#     batch_filepath = os.path.join(savedir, batch_name + model_filename)
 
-    file_path = Path(batch_filepath)
+#     file_path = Path(batch_filepath)
     
-    if file_path.exists():
-        print('Batch', done_batches, 'exists')
-        done_batches += 1
+#     if file_path.exists():
+#         print('Batch', done_batches, 'exists')
+#         done_batches += 1
 
-        with open(file_path, 'rb') as f:
-            batch = pickle.load(f)
-            for k in batch['permutated_confusion_mat']:
-                shuffled_confusion_matrices.append(k)
-                shuffled_accuracies.append(np.trace(k) / np.sum(k))
+#         with open(file_path, 'rb') as f:
+#             batch = pickle.load(f)
+#             for k in batch['permutated_confusion_mat']:
+#                 shuffled_confusion_matrices.append(k)
+#                 shuffled_accuracies.append(np.trace(k) / np.sum(k))
                 
-        done_iterations += shuffles_per_batch
+#         done_iterations += shuffles_per_batch
 
-    else:
-        exists = False
+#     else:
+#         exists = False
             
 
 #keep on from where it was left
@@ -985,51 +996,51 @@ for curr_batch in range(num_batches):
 
     file_path = Path(batch_filepath)
 
-    if override_old or not file_path.exists():
+    #if override_old or not file_path.exists():
         # do the shuffling in batche
-        shuffled_shap_values = []
-        batch_shuffled_confusion_matrices = []
-        shifts = []
-        shuffled_models = []
+    shuffled_shap_values = []
+    batch_shuffled_confusion_matrices = []
+    shifts = []
+    shuffled_models = []
 
-        shift_ind = range(iteration_start, iteration_end)
+    shift_ind = range(iteration_start, iteration_end)
 
-        print('Shuffle batch', batch, iteration_start,
-              iteration_end)
+    print('Shuffle batch', batch, iteration_start,
+            iteration_end)
 
 
 
-        parallel_results = Parallel(n_jobs=shuffles_per_batch)(
-            delayed(shuffle_models)(ind, random_shifts[ind]) for ind in shift_ind)
-        # for ind in shift_ind:
-        #     print(ind)
-        #     parallel_results = [shuffle_models(ind, random_shifts[ind])]
+    parallel_results = Parallel(n_jobs=shuffles_per_batch)(
+        delayed(shuffle_models)(ind, random_shifts[ind]) for ind in shift_ind)
+    # for ind in shift_ind:
+    #     print(ind)
+    #     parallel_results = [shuffle_models(ind, random_shifts[ind])]
 
-        # organize outout
+    # organize outout
 
-        for res in parallel_results:
-            batch_shuffled_confusion_matrices.append(res[0])
-            shuffled_confusion_matrices.append(res[0])
+    for res in parallel_results:
+        batch_shuffled_confusion_matrices.append(res[0])
+        shuffled_confusion_matrices.append(res[0])
 
-            shuffled_shap_values.append(res[1])
+        shuffled_shap_values.append(res[1])
 
-            # Compute the number of correct predictions
-            correct_predictions = np.trace(res[0])  # Sum of diagonal elements
+        # Compute the number of correct predictions
+        correct_predictions = np.trace(res[0])  # Sum of diagonal elements
 
-            # Compute the total number of predictions
-            total_predictions = np.sum(res[0])
-            
-            shifts.append(res[2])
-            
-            shuffled_models.append(res[3])
-
-            # Compute overall accuracy
-            shuffled_accuracies.append(correct_predictions / total_predictions)
-
-        shuffle_summary = {'shuffle_batch': batch, 'permutated_confusion_mat': batch_shuffled_confusion_matrices, 'shap_values': shuffled_shap_values, 'roll_shift': shifts, 'shuffled_models': shuffled_models}
+        # Compute the total number of predictions
+        total_predictions = np.sum(res[0])
         
-        with open(batch_filepath, 'wb') as handle:
-            pickle.dump(shuffle_summary , handle,)
+        shifts.append(res[2])
+        
+        shuffled_models.append(res[3])
+
+        # Compute overall accuracy
+        shuffled_accuracies.append(correct_predictions / total_predictions)
+
+    shuffle_summary = {'shuffle_batch': batch, 'permutated_confusion_mat': batch_shuffled_confusion_matrices, 'shap_values': shuffled_shap_values, 'roll_shift': shifts, 'shuffled_models': shuffled_models}
+    
+    with open(batch_filepath, 'wb') as handle:
+        pickle.dump(shuffle_summary , handle,)
 
 print('Permuted 95% percentile accuracy: ',
       np.percentile(shuffled_accuracies, 95))
@@ -1143,4 +1154,4 @@ while not saved:
     except:
         print('Error: not saved')
 
-log.close()
+#log.close()

@@ -180,7 +180,7 @@ def fdr_bh(p: pd.Series) -> pd.Series:
 
 
 def draw_region_map(ax, geo, values: pd.Series, norm, n_labels=0, inset_labels=True, cmap=DIVERGING,
-                    regions: dict | None = None):
+                    regions: dict | None = None, rank_outside=False):
     """Colour HCP-MMP1 parcels by value; regions outside the atlas go in an inset.
 
     values: region -> value, only for the regions to show (others dark gray).
@@ -209,24 +209,44 @@ def draw_region_map(ax, geo, values: pd.Series, norm, n_labels=0, inset_labels=T
     draw_flat(ax, geo.patch_xy, geo.patch_faces, rgb[vno])
 
     # Name the largest regions. Each label tries above, below, right, left, then
-    # further out, and takes the first spot whose text box overlaps no earlier label.
+    # further out, and takes the first spot whose text box overlaps no earlier
+    # label; if every spot overlaps, the one with the least overlap.
     renderer = ax.figure.canvas.get_renderer()
     placed = []
     spots = [(0, 10, "center", "bottom"), (0, -10, "center", "top"), (14, 0, "left", "center"),
-             (-14, 0, "right", "center"), (0, 24, "center", "bottom"), (0, -24, "center", "top"),
-             (30, 12, "left", "center"), (-30, 12, "right", "center")]
-    for r in cortical.abs().nlargest(n_labels).index:
+             (-14, 0, "right", "center")]
+    for r in (24, 40, 56):
+        spots += [(0, r, "center", "bottom"), (0, -r, "center", "top"), (r, r / 2, "left", "center"),
+                  (-r, r / 2, "right", "center"), (r, -r / 2, "left", "center"), (-r, -r / 2, "right", "center")]
+
+    def overlap(box):
+        return sum(max(0, min(box.x1, b.x1) - max(box.x0, b.x0)) * max(0, min(box.y1, b.y1) - max(box.y0, b.y0))
+                   for b in placed)
+
+    # rank_outside: the n_labels largest |values| over all regions (cortex and the inset) are
+    # named; otherwise n_labels on the cortex and every inset structure.
+    top = set(values.abs().nlargest(n_labels).index) if rank_outside else set(cortical.abs().nlargest(n_labels).index)
+    for r in cortical.abs().sort_values(ascending=False).index:
+        if r not in top:
+            continue
         pts = geo.patch_xy[largest_piece(region_of[vno] == r, geo.patch_faces)]
         xy = pts[np.argmin(((pts - pts.mean(0)) ** 2).sum(1))]   # a vertex inside the piece
-        for k, (dx, dy, ha, va) in enumerate(spots):
+        best = None
+        for dx, dy, ha, va in spots:
             ann = ax.annotate(r, xy, xytext=(dx, dy), textcoords="offset points", ha=ha, va=va,
                               fontsize=7, color=INK, arrowprops=dict(arrowstyle="-", color=INK, lw=0.5),
                               bbox=dict(boxstyle="round,pad=0.15", fc="white", ec="none", alpha=0.8))
             box = ann.get_window_extent(renderer).expanded(1.25, 1.5)
-            if not any(box.overlaps(b) for b in placed) or k == len(spots) - 1:
-                placed.append(box)
+            cost = overlap(box)
+            if best is None or cost < best[0]:
+                if best is not None:
+                    best[1].remove()
+                best = (cost, ann, box)
+            else:
+                ann.remove()
+            if cost == 0:
                 break
-            ann.remove()
+        placed.append(best[2])
 
     # Amygdala / hippocampus in a ventral glass brain, in the map's empty bottom-left corner.
     subcortical = [r for r in outside.index if r in ASEG_LABELS and r not in NOT_SHOWN]
@@ -237,7 +257,9 @@ def draw_region_map(ax, geo, values: pd.Series, norm, n_labels=0, inset_labels=T
         colors = {r: np.array(cmap(norm(outside[r]))[:3]) for r in subcortical}
         sub = ax.inset_axes([-0.04, 0.0, 0.34, 0.38])
         draw_glass_brain(sub, geo.pial_v, geo.faces, ghost, {r: geo.meshes[r] for r in subcortical},
-                         colors, "Ventral", {r: r.replace("Hippocampus-", "HC\n") for r in subcortical} if inset_labels else None)
+                         colors, "Ventral",
+                         {r: r.replace("Hippocampus-", "HC\n") for r in subcortical if not rank_outside or r in top}
+                         if inset_labels else None)
         if inset_labels:
             sub.set_title("Outside HCP-MMP1 (ventral view)", fontsize=7, color=INK_MUTED, pad=2)
 
@@ -254,22 +276,25 @@ def style_axis(ax):
 
 
 def band_second_panel(ax, subj: pd.DataFrame, stats: pd.DataFrame, norm, cmap=DIVERGING,
-                      ylabel="Net signed SHAP (log-odds)", q=None, fdr=0.05):
+                      ylabel="Net signed SHAP (log-odds)", q=None, fdr=0.05, whiskers=True):
     """One bar per band x second: the two seconds of a band side by side.
 
     Bars carry the map's colormap (value), so the second is told by position
     and the "1 s" / "2 s" tick under each bar, with the band name below."""
     width, gap = 0.36, 0.04
     x, ticks = [], []
-    for i, band in enumerate(BANDS):
+    present = set(stats.index.get_level_values(0))
+    bands = [b for b in BANDS if b in present]          # only the bands in the data (e.g. --bands)
+    for i, band in enumerate(bands):
         for sec, off in ((1, -(width + gap) / 2), (2, (width + gap) / 2)):
             x.append(i + off)
             ticks.append((band, sec))
     x = np.array(x)
     s = stats.loc[ticks]
     ax.bar(x, s["mean"], width=width, color=cmap(norm(s["mean"].to_numpy(float))), zorder=2)
-    ax.errorbar(x, s["mean"], yerr=[s["mean"] - s["ci_low"], s["ci_high"] - s["mean"]],
-                fmt="none", ecolor=INK, elinewidth=1.2, capsize=2.5, zorder=4)
+    if whiskers:
+        ax.errorbar(x, s["mean"], yerr=[s["mean"] - s["ci_low"], s["ci_high"] - s["mean"]],
+                    fmt="none", ecolor=INK, elinewidth=1.2, capsize=2.5, zorder=4)
     rng = np.random.default_rng(1)
     for xi, key in zip(x, ticks):
         v = subj[key].dropna()
@@ -286,11 +311,12 @@ def band_second_panel(ax, subj: pd.DataFrame, stats: pd.DataFrame, norm, cmap=DI
                         ha="center", va="bottom", fontsize=9, color=INK)
         ax.set_ylim(top=top * 1.12)
     style_axis(ax)
-    ax.set_xlim(-0.6, len(BANDS) - 0.4)
+    ax.set_xlim(-0.6, len(bands) - 0.4)
     ax.set_xticks(x, [f"{sec} s" for _, sec in ticks], fontsize=7, color=INK_MUTED)
-    for i, band in enumerate(BANDS):
-        ax.text(i, -0.1, BAND_LABELS.get(band, band), transform=ax.get_xaxis_transform(),
-                ha="center", va="top", fontsize=9, color=INK)
+    for i, band in enumerate(bands):
+        # fixed distance below the axis (in points), so short panels keep the labels apart
+        ax.annotate(BAND_LABELS.get(band, band), (i, 0), xycoords=ax.get_xaxis_transform(), xytext=(0, -17),
+                    textcoords="offset points", ha="center", va="top", fontsize=9, color=INK)
     ax.set_ylabel(ylabel, fontsize=8, color=INK)
     ax.set_title("B   Frequency bands, split by second", fontsize=10, color=INK, loc="left")
 
@@ -305,22 +331,91 @@ def main():
                     help="signed: net push towards the correct label; abs: |new vs repeated| importance")
     ap.add_argument("--merged", type=Path, nargs="?", const=REPO / "electrode coverages" / "figures" / "merged_regions.csv",
                     help="parcel -> merged region table (merge_low_coverage.py); SHAP is summed within merged regions")
+    ap.add_argument("--n-labels", type=int, default=6, help="regions named on the map")
+    ap.add_argument("--trials", choices=["test", "error"], default="test",
+                    help="test set (correct responses) or the error trials")
+    ap.add_argument("--vmax-value", type=float, help="fixed map colour scale (e.g. from the correct-trial figure)")
+    ap.add_argument("--bar-ylim", type=float, nargs=2, help="fixed y range of the band x second panel")
+    ap.add_argument("--bar-max", type=float, help="fixed colour scale of the band x second bars")
+    ap.add_argument("--rank-subcortical", action="store_true",
+                    help="hippocampus/amygdala are named only if they are among the --n-labels largest |values|")
+    ap.add_argument("--vmax", choices=["p98", "max"], default="p98",
+                    help="colour scale: 98th percentile of |value| (clipped) or the flatmap's largest |value|")
+    ap.add_argument("--svg", action="store_true", help="also write SVG and PDF (meshes embedded at --svg-dpi)")
+    ap.add_argument("--svg-dpi", type=int, default=600, help="resolution of the embedded meshes in SVG/PDF")
+    ap.add_argument("--parcel-mean", action="store_true",
+                    help="average (not sum) over parcels: within each merged region for the map, over all of the "
+                         "patient's parcels for the band x second bars")
+    ap.add_argument("--drop-recent-errors", action="store_true",
+                    help="error trials: leave the (few) recent trials out; new vs repeated weights new and old 1/2, "
+                         "1/2, recent vs consolidated uses the consolidated error trials only")
+    ap.add_argument("--trial-types", nargs="+", choices=["new", "recent", "old"],
+                    help="use only these trial types (equal weights), e.g. old = consolidated trials only")
+    ap.add_argument("--map-only", action="store_true", help="also write panel A (flatmap) on its own (<name>_map)")
+    ap.add_argument("--no-stats", action="store_true", help="bars and subject dots only: no CI whiskers, no stars")
     ap.add_argument("--fdr", type=float, default=0.05, help="FDR level for the band x second tests (signed measure)")
     ap.add_argument("--contrast", choices=list(CONTRASTS), default="new_vs_repeated")
+    ap.add_argument("--exclude", nargs="+", default=[], metavar="SUBJECT", help="subjects left out")
+    ap.add_argument("--bands", nargs="+", help="only these frequency bands, e.g. GammaL GammaH Ripple")
     args = ap.parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)
     absolute = args.measure == "abs"
-    suffix = ("_abs" if absolute else "") + ("_merged" if args.merged else "")
+    suffix = ("_errors" if args.trials == "error" else "") + ("_abs" if absolute else "") + ("_merged" if args.merged else "")
+    if args.merged and args.merged.stem != "merged_regions":     # e.g. merged_regions_min4_... -> _merged_min4_...
+        suffix += args.merged.stem[len("merged_regions"):]
+    suffix += "".join(f"_without_{e}" for e in args.exclude if f"_without_{e}" not in suffix)
+    suffix += "_parcelmean" if args.parcel_mean else ""
+    suffix += ("_" + "".join(args.bands)) if args.bands else ""
     C = CONTRASTS[args.contrast]
+    if args.drop_recent_errors and args.trials == "error":   # too few recent error trials
+        C = dict(C)
+        if args.contrast == "new_vs_repeated":
+            C["weights"], C["balance"] = {"new": 0.5, "old": 0.5}, "new and old weighted 1/2, 1/2; recent error trials left out"
+        else:
+            C["weights"], C["balance"] = {"old": 1.0}, "consolidated (old) error trials only; recent error trials left out"
+        suffix += "_norecent"
+    if args.trial_types:                                     # e.g. consolidated trials only, for comparison
+        C = dict(C)
+        C["weights"] = {t: 1 / len(args.trial_types) for t in args.trial_types}
+        C["balance"] = " and ".join(args.trial_types) + " trials only" + (", equal weights" if len(args.trial_types) > 1 else "")
+        suffix += "_only" + "".join(args.trial_types)
     prefix = C["prefix"]
 
-    out = signed_shap(pd.read_pickle(args.pkl), args.contrast)
+    out = signed_shap(pd.read_pickle(args.pkl), args.contrast, args.trials)
     values, missing = (out["contrast"] if absolute else out["signed"]), out["missing"]
+    if args.bands:                                  # keep only the chosen bands
+        unknown = set(args.bands) - set(values.columns.get_level_values("band"))
+        if unknown:
+            raise SystemExit(f"unknown band(s) {sorted(unknown)}")
+        keep = values.columns.get_level_values("band").isin(args.bands)
+        values, missing = values.loc[:, keep], missing.loc[:, keep]
+    if args.exclude:
+        keep = ~values.index.get_level_values("subject").isin(args.exclude)
+        if keep.all():
+            raise SystemExit(f"--exclude: none of {args.exclude} in the data")
+        values, missing = values[keep], missing[keep]
+        covered = ~missing.all()                    # drop features only the excluded subjects had
+        values, missing = values.loc[:, covered], missing.loc[:, covered]
     regions = None
-    if args.merged:
-        values, missing, regions = merge_regions(values, missing, args.merged)
     levels = {"region": "region", "band": "band", "second": "second", "band_second": ["band", "second"]}
-    subj = {name: subject_means(values, missing, lvl, absolute, C["weights"]) for name, lvl in levels.items()}
+    if args.parcel_mean:
+        # per trial: mean over parcels (NaN skipped) instead of the sum, then as before
+        masked = values.where(~missing.to_numpy())
+        if args.merged:
+            regions = pd.read_csv(args.merged, dtype=str).set_index("parcel")["region"].to_dict()
+        cols = masked.columns
+        keys = [[(regions or {}).get(r, r) for r in cols.get_level_values("region")],
+                cols.get_level_values("band"), cols.get_level_values("second")]
+        per_region = masked.T.groupby(keys).mean().T
+        per_region.columns.names = ["region", "band", "second"]
+        per_parcel_band = masked.T.groupby(level=["band", "second"]).mean().T
+        subj = {"region": subject_means(per_region, per_region.isna(), "region", absolute, C["weights"])}
+        for name in ("band", "second", "band_second"):
+            subj[name] = subject_means(per_parcel_band, per_parcel_band.isna(), levels[name], absolute, C["weights"])
+    else:
+        if args.merged:
+            values, missing, regions = merge_regions(values, missing, args.merged)
+        subj = {name: subject_means(values, missing, lvl, absolute, C["weights"]) for name, lvl in levels.items()}
     stats = {name: pool(s, args.n_boot) for name, s in subj.items()}
     stats["band_second"].index.names = ["band", "second"]
     for name, s in stats.items():
@@ -332,7 +427,9 @@ def main():
     geo = load_flatmap(args.cache)
     # 98th percentile of |mean| so a single region does not wash out the rest;
     # the colour bar marks the clipped ends.
-    vmax = np.percentile(np.abs(shown["mean"]), 98)
+    cortical_shown = shown["mean"][~shown.index.isin(list(ASEG_LABELS))]
+    vmax = (args.vmax_value if args.vmax_value else
+            np.abs(cortical_shown).max() if args.vmax == "max" else np.percentile(np.abs(shown["mean"]), 98))
     cmap = SEQUENTIAL if absolute else DIVERGING
     norm = Normalize(0, vmax) if absolute else TwoSlopeNorm(0, -vmax, vmax)
 
@@ -341,7 +438,8 @@ def main():
                           left=0.07, right=0.98, top=0.93, bottom=0.1)
 
     ax = fig.add_subplot(gs[0])
-    draw_region_map(ax, geo, shown["mean"], norm, n_labels=6, cmap=cmap, regions=regions)
+    draw_region_map(ax, geo, shown["mean"], norm, n_labels=args.n_labels, cmap=cmap, regions=regions,
+                    rank_outside=args.rank_subcortical)
     ax.set_title("A   Regions" + (", low-coverage parcels merged" if regions else "")
                  + " (flatmap, left hemisphere; hemispheres pooled)",
                  fontsize=10, color=INK, loc="left")
@@ -359,11 +457,11 @@ def main():
     leg = ax.inset_axes([0.22, -0.07, 0.25, 0.03])
     leg.set_xlim(0, 1); leg.set_ylim(0, 1); leg.axis("off")
     leg.add_patch(plt.Rectangle((0, 0), 0.08, 1, facecolor=NO_DATA_GYRUS, edgecolor=AXIS, lw=0.5))
-    leg.text(0.11, 0.5, f"Fewer than {args.min_subjects} subjects", fontsize=7, color=INK, va="center")
+    leg.text(0.11, 0.5, f"No electrodes or fewer than {args.min_subjects} subjects", fontsize=7, color=INK, va="center")
 
     # Bars use the map's colormap on their own symmetric scale (the map's clipped
     # scale would saturate them).
-    bar_max = np.abs(stats["band_second"]["mean"]).max()
+    bar_max = args.bar_max or np.abs(stats["band_second"]["mean"]).max()
     # signed measure: one-sided one-sample t-test per band x second over subjects
     # (H1: mean > 0), Benjamini-Hochberg FDR across the 14 band x second bars
     q = None
@@ -372,35 +470,77 @@ def main():
         bs.to_csv(args.out_dir / f"{prefix}{suffix}_band_second.csv")
         q = bs["q_greater"]
         print(bs[["mean", "p_greater", "q_greater", "n_subjects"]].round(5).to_string())
-    band_second_panel(fig.add_subplot(gs[1]), subj["band_second"], stats["band_second"],
+    ax_b = fig.add_subplot(gs[1])
+    band_second_panel(ax_b, subj["band_second"], stats["band_second"],
                       Normalize(0, bar_max) if absolute else TwoSlopeNorm(0, -bar_max, bar_max), cmap,
                       f"Mean |SHAP {C['short']}| (log-odds)" if absolute else "Net signed SHAP (log-odds)",
-                      q, args.fdr)
+                      None if args.no_stats else q, args.fdr, whiskers=not args.no_stats)
+    if args.bar_ylim:
+        ax_b.set_ylim(*args.bar_ylim)
 
     n_subj = len(subj["band"])
+    named_txt = ((f"top {args.n_labels} by |value| named"
+                  + (" (hippocampus and amygdala included in the ranking)" if args.rank_subcortical else ""))
+                 if args.n_labels else "no regions named")
     fig.suptitle(f"How strongly each region, band and second drives the {C['title']} decision"
-                 if absolute else f"What drives the model's {C['title']} decision",
+                 if absolute else f"What drives the model's {C['title']} decision"
+                 + (" on error trials" if args.trials == "error" else ""),
                  fontsize=13, color=INK, x=0.07, ha="left")
     what = (f"|{C['formula']}|, NaN features left out; per trial summed within a "
             "region/band/second, then made absolute, " if absolute else
             f"{C['formula']} (sign flipped on {C['flipped']} trials), NaN features left out; "
-            "per trial summed within a region/band/second, ")
-    fig.text(0.07, 0.005 - 0.022 * (bool(regions) + (not absolute)),
+            + ("per trial averaged over the subject's parcels\n(A: within each merged region, summed over band/second; "
+               "B: over all parcels), " if args.parcel_mean else "per trial summed within a region/band/second, "))
+    fig.text(0.07, 0.005 - 0.022 * (bool(regions) + (not absolute) + bool(args.parcel_mean)),
+             ("Error trials (new images answered old, recent/old images answered new); sign set by the true category, "
+              "so > 0 still pushes towards the true label.\n" if args.trials == "error" else "") +
              what +
              f"averaged within subject ({C['balance']}), then across {n_subj} subjects.\n" +
-             (f"A: parcels with <{args.min_subjects} subjects merged with neighbours ({args.merged.name}), "
-              f"SHAP summed within each merged region;\n   " if regions else "A: ") +
+             (f"Excluded: {', '.join(args.exclude)}. " if args.exclude else "") +
+             (f"A: low-coverage parcels merged with neighbours as in {args.merged.name}, "
+              f"SHAP {'averaged over the parcels' if args.parcel_mean else 'summed'} within each merged region;\n   "
+              if regions else "A: ") +
              f"{len(shown)} regions with ≥{args.min_subjects} subjects "
-             f"({len(region) - len(shown)} with fewer shown dark gray); top 6 by |value| named; "
+             f"({len(region) - len(shown)} with fewer shown dark gray); {named_txt}; "
              +
-             f"colour scale clipped at {'' if absolute else '±'}{vmax:.3f} (98th percentile of |value|).\n"
-             f"B: per band and second; map colormap on its own scale ({'0–' if absolute else '±'}{bar_max:.3f}); bars = mean over subjects, whiskers = 95% bootstrap CI over subjects, dots = subjects"
-             + ("." if absolute else f";\n   stars: mean > 0, one-sided one-sample t-test over subjects, Benjamini-Hochberg "
+             (f"colour scale fixed at {'' if absolute else '±'}{vmax:.3f} (shared with the matching correct/error-trial figure).\n"
+              if args.vmax_value else
+              f"colour scale up to {'' if absolute else '±'}{vmax:.3f} (largest |value| on the flatmap).\n"
+              if args.vmax == "max" else
+              f"colour scale clipped at {'' if absolute else '±'}{vmax:.3f} (98th percentile of |value|).\n") +
+             (f"B: per band and second; bars coloured on the map's scale ({'0–' if absolute else '±'}{bar_max:.3f}); bars = mean over subjects, "
+              if args.bar_max and abs(args.bar_max - vmax) < 1e-12 else
+              f"B: per band and second; map colormap on its own scale ({'0–' if absolute else '±'}{bar_max:.3f}{', fixed' if args.bar_max else ''}); bars = mean over subjects, ")
+             + ("dots = subjects." if args.no_stats else "whiskers = 95% bootstrap CI over subjects, dots = subjects")
+             + ("" if args.no_stats else "." if absolute else f";\n   stars: mean > 0, one-sided one-sample t-test over subjects, Benjamini-Hochberg "
                                      f"FDR across the 14 bars (* q < {args.fdr:g}, ** q < 0.01, *** q < 0.001)."),
              fontsize=7.5, color=INK_MUTED)
-    path = args.out_dir / f"{prefix}_contributions{suffix}.png"
+    path = args.out_dir / f"{prefix}_contributions{suffix}{'_nostats' if args.no_stats else ''}.png"
     fig.savefig(path, dpi=200, bbox_inches="tight")
     print("wrote", path)
+    if args.svg:                  # vector text and lines; the cortical / subcortical meshes as 600 dpi images
+        from matplotlib.collections import PolyCollection
+        plt.rcParams.update({"svg.fonttype": "none", "pdf.fonttype": 42})
+        for c in fig.findobj(PolyCollection):   # includes inset (child) axes
+            if len(c.get_paths()) > 1000:
+                c.set_rasterized(True)
+        for ext in ("svg", "pdf"):
+            fig.savefig(path.with_suffix(f".{ext}"), dpi=args.svg_dpi, bbox_inches="tight")
+        print("wrote", path.with_suffix(".svg"), "and .pdf")
+    if args.map_only:             # panel A (flatmap, labels, colour bar) on its own
+        from matplotlib.transforms import Bbox
+        for t in [fig._suptitle, ax.title, ax._left_title, ax._right_title] + list(fig.texts):   # no titles or footer
+            if t is not None:
+                t.set_visible(False)
+        fig.canvas.draw()
+        box = Bbox.union([ax.get_window_extent()] +
+                         [c.get_tightbbox(fig.canvas.get_renderer()) for c in ax.child_axes])
+        box = box.transformed(fig.dpi_scale_trans.inverted()).padded(0.08)
+        map_path = path.with_name(path.stem + "_map.png")
+        exts = ("png", "svg", "pdf") if args.svg else ("png",)
+        for ext in exts:
+            fig.savefig(map_path.with_suffix(f".{ext}"), dpi=args.svg_dpi if ext != "png" else 300, bbox_inches=box)
+        print("wrote", map_path.with_suffix(".svg" if args.svg else ".png"))
 
 
 if __name__ == "__main__":

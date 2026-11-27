@@ -54,6 +54,11 @@ CONTRASTS = {
         call="recent/consolidated", flipped="recent", weights={"recent": 0.5, "old": 0.5},
         balance="recent and consolidated weighted 1/2, 1/2; new trials left out",
         formula="SHAP(consolidated) − SHAP(recent)"),
+    "new_vs_consolidated": dict(
+        prefix="new_vs_consolidated", title="new vs consolidated (old)", short="new − consolidated",
+        call="new/consolidated", flipped="consolidated", weights={"new": 0.5, "old": 0.5},
+        balance="new and consolidated weighted 1/2, 1/2; recent trials left out",
+        formula="SHAP(new) − SHAP(consolidated)"),
 }
 
 
@@ -65,7 +70,7 @@ def feature_columns(names) -> pd.MultiIndex:
         names=["region", "band", "second"])
 
 
-def signed_shap(data: dict, contrast: str = "new_vs_repeated") -> dict:
+def signed_shap(data: dict, contrast: str = "new_vs_repeated", trials: str = "test") -> dict:
     """Per trial x feature contrast values; see the module docstring.
 
     contrast "new_vs_repeated":        SHAP(new) - (SHAP(recent) + SHAP(old))/2
@@ -74,30 +79,48 @@ def signed_shap(data: dict, contrast: str = "new_vs_repeated") -> dict:
                                         (> 0 pushes towards consolidated/old),
                                         recent and old trials only.
     "signed" flips the sign on trials of the negative label, so > 0 is always a
-    push towards the trial's correct label."""
+    push towards the trial's correct label.
+
+    trials "test": the test set (correct responses); "error": the error set
+    (models["error_data"] / "error_shap_values"; image_category -1/-2/-3 =
+    new/recent/old answered wrongly). For errors the sign follows the true
+    category, so > 0 still means a push towards the true label; the returned
+    index carries |image_category| so the trial types weigh as for correct trials."""
     models = data["models"]
-    shap = models["test_shap_values"] if "test_shap_values" in models else models["shap_values"]
-    test = models["test_data"]
+    if trials == "error":
+        shap, test = models["error_shap_values"], models["error_data"]
+    else:
+        shap = models["test_shap_values"] if "test_shap_values" in models else models["shap_values"]
+        test = models["test_data"]
+    original = test
     names = list(models["xgboost"].feature_names_in_)
     assert shap.shape[:2] == (len(test), len(names))
     assert names == list(data["features"].columns[:-1])
-    category = test.get_level_values("image_category").to_numpy()
+    category = np.abs(test.get_level_values("image_category").to_numpy())
 
     if contrast == "new_vs_repeated":
         value = shap[..., NEW] - (shap[..., RECENT] + shap[..., OLD]) / 2
         positive = category == NEW_CATEGORY
     elif contrast == "recent_vs_consolidated":
         keep = np.isin(category, [2, 3])                  # recent and old (consolidated) trials
-        shap, test, category = shap[keep], test[keep], category[keep]
+        shap, test, category, original = shap[keep], test[keep], category[keep], original[keep]
         value = shap[..., OLD] - shap[..., RECENT]
         positive = category == 3
+    elif contrast == "new_vs_consolidated":
+        keep = np.isin(category, [1, 3])                  # new and old (consolidated) trials
+        shap, test, category, original = shap[keep], test[keep], category[keep], original[keep]
+        value = shap[..., NEW] - shap[..., OLD]
+        positive = category == NEW_CATEGORY
     else:
         raise ValueError(f"unknown contrast {contrast!r}")
     signed = np.where(positive[:, None], value, -value)
 
     cols = feature_columns(names)
+    missing = data["features"].loc[original, names].isna().to_numpy()
+    if trials == "error":                         # index with the true category (1/2/3)
+        test = test.set_levels(np.abs(test.levels[test.names.index("image_category")]),
+                               level="image_category", verify_integrity=False)
     frame = lambda a: pd.DataFrame(a.astype(np.float32), index=test, columns=cols)
-    missing = data["features"].loc[test, names].isna().to_numpy()
     return {"signed": frame(signed), "contrast": frame(value), "new_vs_rep": frame(value),
             "missing": pd.DataFrame(missing, index=test, columns=cols)}
 
